@@ -3,15 +3,13 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import type { PublicReport } from "./report.model.js";
 import { trDate } from "./report.html.js";
+import { CONTACT, gradeOf } from "../audit/plain-language.js";
 
 // Growth Audit™ PDF raporu. Türkçe karakterler için marka yazı tipi (Plus Jakarta Sans, OFL) gömülür.
 
 const C = { ink: "#07111f", muted: "#5d6470", subtle: "#8a909a", line: "#e6e2da", soft: "#f5f3ef", accent: "#f04432", ok: "#1f8a4c", warn: "#b26a00", bad: "#c2341f" };
 const FONT = (weight: string) => require.resolve(`@expo-google-fonts/plus-jakarta-sans/${weight}/PlusJakartaSans_${weight}.ttf`);
 const LOGO = path.resolve(process.cwd(), "assets/brand/logo-wordmark-on-light.png");
-const PRIORITY: Record<string, string> = { critical: "Kritik", high: "Yüksek etki", medium: "Orta", low: "Düşük" };
-const DIFF: Record<string, string> = { easy: "Kolay", medium: "Orta", hard: "Zor" };
-const IMPACT: Record<string, string> = { high: "Yüksek", medium: "Orta", low: "Düşük" };
 const bandColor = (s: number | null) => (s == null ? C.subtle : s >= 80 ? C.ok : s >= 60 ? C.ink : s >= 40 ? C.warn : C.bad);
 const pct = (v: number | null) => (v == null ? "–" : `%${Math.round(v * 100)}`);
 
@@ -48,77 +46,65 @@ export function renderReportPdf(r: PublicReport): Promise<Buffer> {
     doc.path(`M ${cx - rad} ${cy} A ${rad} ${rad} 0 0 1 ${(cx + rad * Math.cos(a)).toFixed(2)} ${(cy - rad * Math.sin(a)).toFixed(2)}`).lineWidth(10).lineCap("round").strokeColor(bandColor(r.score)).stroke();
   }
   doc.font("B").fontSize(26).fillColor(C.ink).text(r.score == null ? "–" : String(Math.round(r.score)), cx - 40, cy - 30, { width: 80, align: "center" });
-  doc.font("R").fontSize(7.5).fillColor(C.muted).text("Growth Score™ / 100", cx - 50, cy + 2, { width: 100, align: "center" });
-  const rows: [string, string][] = [["Veri kapsamı", pct(r.coverage)], ["Güven düzeyi", pct(r.confidence)], ["Denetim tarihi", trDate(r.auditDate)], ["Puanlama sürümü", r.scoringVersion]];
-  rows.forEach(([k, v], i) => {
-    const y = top + 16 + i * 22, x = L + 190;
-    doc.font("R").fontSize(10).fillColor(C.muted).text(k, x, y, { width: 150 });
-    doc.font("S").fontSize(10).fillColor(C.ink).text(v, x + 150, y, { width: W - 190 - 150 - 14, align: "right" });
-  });
-  doc.y = top + 122;
-  para("Growth Score, sitenin dijital olgunluğunu altı kategoride 0–100 arasında ölçer. Ölçülemeyen metrikler sıfır sayılmaz; kapsam ayrıca gösterilir.", { size: 8.5, color: C.subtle });
+  doc.font("R").fontSize(7.5).fillColor(C.muted).text("/ 100", cx - 50, cy + 2, { width: 100, align: "center" });
+  const x0 = L + 190, tw = W - 190 - 16;
+  doc.font("S").fontSize(13).fillColor(C.ink).text("Web sitenizin genel puanı", x0, top + 18, { width: tw });
+  doc.font("B").fontSize(12).fillColor(bandColor(r.score) === C.ink ? C.ink : bandColor(r.score)).text(gradeOf(r.score), x0, top + 38, { width: tw });
+  doc.font("R").fontSize(8.5).fillColor(C.muted).text("Sitenizi altı başlıkta inceledik. 80 ve üzeri iyi, 60–79 geliştirilebilir, 60'ın altı acil iyileştirme gerektirir.", x0, top + 58, { width: tw, lineGap: 1.5 });
+  doc.y = top + 124;
 
-  if (r.summary) { h2("Yönetici özeti"); para(r.summary.headline, { font: "S", size: 11.5 }); doc.moveDown(0.3); para(r.summary.narrative, { color: C.muted }); }
+  if (r.summary) { h2("Kısaca durum"); para(r.summary.headline, { font: "S", size: 11.5 }); doc.moveDown(0.3); para(r.summary.narrative, { color: C.muted }); }
 
-  h2("Kategori puanları");
+  h2("Başlık başlık puanlar");
   for (const c of r.categories) {
-    ensure(34);
+    ensure(28);
     const y = doc.y;
     doc.font("R").fontSize(10).fillColor(C.ink).text(`${c.name}`, L, y, { width: W - 60 });
     doc.font("S").fontSize(10).fillColor(C.ink).text(c.score == null ? "–" : String(Math.round(c.score)), L + W - 60, y, { width: 60, align: "right" });
     doc.roundedRect(L, y + 15, W, 6, 3).fill("#f0ede7");
     if (c.score != null) doc.roundedRect(L, y + 15, Math.max(4, (W * c.score) / 100), 6, 3).fill(bandColor(c.score));
-    doc.font("R").fontSize(7.5).fillColor(C.subtle).text(`Ağırlık %${c.weight} · Kapsam ${pct(c.coverage)}`, L, y + 24, { width: W });
-    doc.y = y + 36;
+    doc.y = y + 30;
   }
 
   if (r.opportunities.length) {
-    h2("Öncelikli büyüme fırsatları");
-    for (const o of r.opportunities.slice(0, 8)) {
-      ensure(80);
+    h2("Önce bunları düzeltin");
+    r.opportunities.slice(0, 5).forEach((o, i) => {
+      ensure(70);
       const y0 = doc.y;
-      doc.font("S").fontSize(8).fillColor(o.priority === "critical" ? C.bad : o.priority === "high" ? C.warn : C.muted).text(PRIORITY[o.priority] || o.priority, L + W - 90, y0 + 2, { width: 90, align: "right" });
-      doc.font("S").fontSize(11).fillColor(C.ink).text(o.title, L, y0, { width: W - 100 });
+      if (o.priority === "critical" || o.priority === "high") doc.font("S").fontSize(8).fillColor(o.priority === "critical" ? C.bad : C.warn).text(o.priority === "critical" ? "Acil" : "Önemli", L + W - 90, y0 + 2, { width: 90, align: "right" });
+      doc.font("S").fontSize(11).fillColor(C.ink).text(`${i + 1}. ${o.title}`, L, y0, { width: W - 100 });
       doc.moveDown(0.15);
-      para(o.problem, { color: C.muted, size: 9.5 });
-      para(`Önerilen adım: ${o.action}`, { size: 9.5 });
-      para(`Etki: ${IMPACT[o.impact] || o.impact} · Zorluk: ${DIFF[o.difficulty] || o.difficulty} · ${o.basis === "observed" ? "Ölçülmüş bulgu" : "Değerlendirme"}${o.service ? ` · ${o.service}` : ""}`, { size: 8, color: C.subtle });
+      para(o.why, { color: C.muted, size: 9.5 });
+      para(`Ne yapmalı: ${o.action}`, { size: 9.5 });
       doc.moveDown(0.6);
-    }
+    });
   }
 
   if (r.roadmap.some((p) => p.items.length)) {
-    h2("30 / 60 / 90 günlük yol haritası");
+    h2("Adım adım plan");
     for (const p of r.roadmap) {
+      if (!p.items.length) continue;
       ensure(40);
       para(p.phase, { font: "S", size: 11 });
-      if (!p.items.length) para("Bu dönem için ek iş öngörülmedi.", { size: 9, color: C.subtle });
-      for (const i of p.items) { ensure(30); para(`• ${i.title}: ${i.action}`, { size: 9.5, color: C.muted, indent: 8 }); }
+      for (const i of p.items) { ensure(20); para(`• ${i.title}`, { size: 9.5, color: C.muted, indent: 8 }); }
       doc.moveDown(0.5);
     }
   }
 
-  if (r.services.length) {
-    h2("Önerilen Istanbul Marketing hizmetleri");
-    for (const s of r.services) { ensure(30); para(s.name, { font: "S", size: 10.5 }); para(s.reasons.join(" · "), { size: 9, color: C.muted }); doc.moveDown(0.4); }
-  }
+  if (r.strengths.length) { h2("İyi giden şeyler"); for (const s of r.strengths) { ensure(20); para(`• ${s.name}`, { size: 9.5, color: C.muted }); } }
 
-  if (r.findings.length) {
-    h2("Kanıta dayalı bulgular");
-    for (const f of r.findings) {
-      ensure(60);
-      para(`${f.name} — ${f.score}/100`, { font: "S", size: 10.5 });
-      para(`${f.category} · ${f.state === "MEASURED" ? "Ölçüldü" : "Tahmini"}`, { size: 8, color: C.subtle });
-      for (const o of f.observations) { ensure(20); para(`• ${o.source}: ${o.text}`, { size: 9, color: C.muted, indent: 8 }); }
-      if (f.recommendation) para(`Öneri: ${f.recommendation}`, { size: 9 });
-      doc.moveDown(0.5);
-    }
-  }
+  // İletişim çağrısı
+  ensure(110); doc.moveDown(1.2);
+  const cy0 = doc.y;
+  doc.roundedRect(L, cy0, W, 96, 10).fill(C.ink);
+  doc.font("B").fontSize(14).fillColor("#ffffff").text("Bu sorunları birlikte çözelim", L + 18, cy0 + 16, { width: W - 36 });
+  doc.font("R").fontSize(9.5).fillColor("#c9cdd4").text("Raporu 15 dakikalık ücretsiz bir görüşmede sizinle birlikte gözden geçirelim.", L + 18, cy0 + 38, { width: W - 36 });
+  doc.font("S").fontSize(10).fillColor("#ffffff").text(`WhatsApp / Telefon: ${CONTACT.phoneDisplay}   ·   ${CONTACT.email}   ·   istanbul.marketing`, L + 18, cy0 + 64, { width: W - 36, link: `https://wa.me/${CONTACT.whatsapp}` });
+  doc.y = cy0 + 106;
 
-  if (r.strengths.length) { h2("Güçlü yönler"); for (const s of r.strengths) { ensure(20); para(`• ${s.name} (${s.score}): ${s.observation}`, { size: 9, color: C.muted }); } }
-
-  h2("Kapsam ve sınırlamalar");
-  for (const l of r.limitations) { ensure(20); para(`• ${l}`, { size: 8.5, color: C.muted }); }
+  h2("Teknik detaylar");
+  para(`Analiz tarihi: ${trDate(r.auditDate)} · Veri kapsamı: ${pct(r.coverage)} · Güven düzeyi: ${pct(r.confidence)} · Puanlama sürümü: ${r.scoringVersion}`, { size: 8, color: C.subtle });
+  for (const l of r.limitations) { ensure(16); para(`• ${l}`, { size: 8, color: C.subtle }); }
 
   // Altbilgi ve sayfa numarası
   const range = doc.bufferedPageRange();

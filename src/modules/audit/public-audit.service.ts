@@ -7,6 +7,7 @@ import { getAll, getOne, put } from "../growth/lib/redis.js";
 import { hashToken } from "../sales/sales.service.js";
 import { AuditConflictError, AuditService } from "./audit.service.js";
 import { CATEGORIES } from "./audit.types.js";
+import { categoryPlain, gradeOf, opportunityPlain } from "./plain-language.js";
 import { assertPublicUrl, normalizeWebsite } from "./safe-fetch.js";
 
 // Ücretsiz dijital analiz (herkese açık form). Web sitesi ve Instagram trafiğinden gelen talep:
@@ -47,10 +48,9 @@ export function validatePublicAuditInput(body: any): ValidationResult {
   if (s(b.website_hp, 200)) return fail("spam"); // bal küpü: insanlar bu alanı görmez
   const url = normalizeWebsite(s(b.websiteUrl, 300));
   if (!url) return fail("invalid_url");
+  // Yalnızca web sitesi adresi zorunludur; ad ve iletişim bilgileri isteğe bağlıdır (verilirse doğrulanır).
   const name = s(b.name, 100);
-  if (name.length < 2) return fail("name_required");
   const email = s(b.email, 120).toLowerCase(), phone = s(b.phone, 30);
-  if (!email && !phone) return fail("contact_required");
   if (email && !EMAIL.test(email)) return fail("invalid_email");
   if (phone && !/^\+?[0-9 ()-]{7,20}$/.test(phone)) return fail("invalid_phone");
   if (b.consent !== true) return fail("consent_required");
@@ -71,6 +71,7 @@ export const domainOf = (website: unknown) => normalizeWebsite(String(website ||
 export const reportTokenFor = (pollToken: string) => crypto.createHmac("sha256", pollToken).update("im-public-report").digest("base64url");
 const TOKEN = /^[A-Za-z0-9_-]{40,64}$/;
 const REPORT_DAYS = 90;
+const REUSE_MS = 24 * 3_600_000; // aynı alan adı için 24 saat içindeki tamamlanmış denetim yeniden kullanılır
 
 // Var olan firma kaydına gelen talebi ekler; ekibin girdiği dolu alanların üzerine yazmaz.
 export function mergeInbound(cur: Record<string, any> | null, input: PublicAuditInput, domain: string, now = new Date()) {
@@ -103,7 +104,7 @@ export class PublicAuditService {
     return { id, lead };
   }
 
-  async submit(input: PublicAuditInput, ip: string) {
+  async submit(input: PublicAuditInput, ip: string, opts: { notify?: boolean; createdBy?: string } = {}) {
     const url = new URL(input.websiteUrl);
     try { await assertPublicUrl(url); } catch { throw new PublicAuditError("unreachable_url", publicMessage("unreachable_url", input.locale)); }
     const domain = domainOf(input.websiteUrl);
@@ -116,8 +117,14 @@ export class PublicAuditService {
     }
     await put("leads", leadId, mergeInbound(existing?.lead ?? null, input, domain));
 
-    let auditId: string;
-    try { auditId = (await this.audits.start(leadId, "public-form")).id; }
+    let auditId: string | undefined;
+    if (existing) {
+      const recent = await this.prisma.growthAudit.findFirst({
+        where: { leadId, status: "completed", finishedAt: { gte: new Date(Date.now() - REUSE_MS) } }, orderBy: { finishedAt: "desc" }, select: { id: true },
+      });
+      auditId = recent?.id;
+    }
+    if (!auditId) try { auditId = (await this.audits.start(leadId, opts.createdBy || "public-form")).id; }
     catch (error) {
       if (error instanceof AuditConflictError && error.auditId) auditId = error.auditId; // aktif denetim varsa onu kullan
       else throw error;
@@ -127,15 +134,16 @@ export class PublicAuditService {
     await this.prisma.publicAuditRequest.create({
       data: { tokenHash: hashToken(token), leadId, auditId, source: input.source, locale: input.locale, ipHash: hashToken(`${process.env.SESSION_SECRET || ""}:${ip}`) },
     });
-    this.notify(leadId, input, !existing).catch(() => {}); // bildirim hatası isteği bozmaz
-    return { token, leadId, isNew: !existing };
+    // Instagram botu bildirim istemez (ekip Instagram'dan elle yanıtlar).
+    if (opts.notify !== false) this.notify(leadId, input, !existing).catch(() => {}); // bildirim hatası isteği bozmaz
+    return { token, leadId, auditId, isNew: !existing };
   }
 
   async notify(leadId: string, input: PublicAuditInput, isNew: boolean) {
     const src = input.source === "instagram" ? "Instagram" : "Web sitesi";
     const lines = [
       `${isNew ? "Yeni" : "Tekrar"} ücretsiz analiz talebi (${src})`,
-      `Firma: ${input.company || domainOf(input.websiteUrl)}`, `Kişi: ${input.name}`,
+      `Firma: ${input.company || domainOf(input.websiteUrl)}`, input.name && `Kişi: ${input.name}`,
       input.phone && `Telefon: ${input.phone}`, input.email && `E-posta: ${input.email}`, `Site: ${input.websiteUrl}`,
       input.message && `Not: ${input.message.slice(0, 300)}`,
     ].filter(Boolean).join("\n");
@@ -178,9 +186,13 @@ export class PublicAuditService {
       status: "completed", progress: 100, stage: null,
       result: {
         overallScore: audit.overallScore == null ? null : Math.round(Number(audit.overallScore)),
-        categories: ((audit.categoryScores as any[]) || []).map((c) => ({ key: c.id, label: c.name || names.get(c.id) || c.id, score: c.score == null ? null : Math.round(Number(c.score)) })),
+        grade: gradeOf(audit.overallScore == null ? null : Number(audit.overallScore), locale),
+        categories: ((audit.categoryScores as any[]) || []).map((c) => ({ key: c.id, label: locale === "tr" ? categoryPlain(c.id, c.name || names.get(c.id)) : c.name || names.get(c.id) || c.id, score: c.score == null ? null : Math.round(Number(c.score)) })),
         summary: summary?.headline ? [summary.headline, summary.narrative].filter(Boolean).join("\n\n") : null,
-        topOpportunities: audit.opportunities.map((o) => ({ title: o.title, why: o.problem, recommendedService: o.service })),
+        topOpportunities: audit.opportunities.map((o) => {
+          const p = locale === "tr" ? opportunityPlain(o) : { title: o.title, why: o.problem };
+          return { title: p.title, why: p.why, recommendedService: o.service };
+        }),
         reportUrl: `${baseUrl}/r/${reportToken}`,
       },
     };

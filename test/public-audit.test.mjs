@@ -24,12 +24,11 @@ describe("Herkese açık form doğrulaması", () => {
     assert.equal(code({ website_hp: "bot" }), "spam");
     assert.equal(code({ consent: undefined }), "consent_required");
     assert.equal(code({ consent: "true" }), "consent_required");
-    assert.equal(code({ email: "", phone: "" }), "contact_required");
+    assert.equal(svc.validatePublicAuditInput({ websiteUrl: "ornek.com", consent: true }).ok, true); // yalnızca URL yeterli
     assert.equal(code({ email: "yanlis" }), "invalid_email");
     assert.equal(code({ email: "", phone: "abc" }), "invalid_phone");
     assert.equal(code({ websiteUrl: "javascript:alert(1)" }), "invalid_url");
     assert.equal(code({ websiteUrl: "localhost" }), "invalid_url");
-    assert.equal(code({ name: "" }), "name_required");
   });
   it("İngilizce mesaj döner, bilinmeyen kaynak 'web' sayılır", () => {
     const r = svc.validatePublicAuditInput({ ...valid, locale: "en", consent: false });
@@ -62,6 +61,9 @@ describe("Firma kaydı birleştirme", () => {
   });
   it("alan adı karşılaştırması www ve şemadan bağımsızdır", () => {
     assert.equal(svc.domainOf("http://www.OrnekKlinik.com/iletisim"), "ornekklinik.com");
+    const only = svc.validatePublicAuditInput({ websiteUrl: "ornek.com", consent: true }).data;
+    const l = svc.mergeInbound(null, only, "ornek.com");
+    assert.equal(l.name, "ornek.com"); assert.equal(l.inbound, true); assert.ok(!("contactName" in l) && !("email" in l));
     assert.equal(svc.slug("Örnek Diş Kliniği"), "ornek-dis-klinigi");
   });
   it("rapor belirteci sorgu belirtecinden kararlı türetilir ve rapor biçimine uyar", () => {
@@ -105,7 +107,7 @@ describe("Herkese açık controller", () => {
     const req = fakeReq({ ip: "203.0.113.77" });
     const codes = [];
     for (let i = 0; i < 6; i++) { const res = fakeRes(); await c.start(valid, req, res); codes.push(res.code); }
-    assert.deepEqual(codes, [202, 202, 202, 202, 202, 429]);
+    assert.deepEqual(codes, [202, 202, 202, 429, 429, 429]);
   });
   it("bilinmeyen belirteçte 404 döner", async () => {
     const c = new ctrl.PublicAuditController({ poll: async () => null });
@@ -127,14 +129,15 @@ describe("Sorgu yanıtı", () => {
       id: "a1", leadId: "ornek", status: "completed", overallScore: "62.4", progress: 100, stage: null,
       categoryScores: [{ id: "search", name: "Arama ve Bulunabilirlik", score: 55.2 }],
       summary: { headline: "Başlık", narrative: "Anlatı" },
-      opportunities: [{ title: "SEO iyileştirilmeli", problem: "robots.txt yok", service: "SEO", priorityScore: 40, confidence: 0.9 }],
+      opportunities: [{ metricIds: ["seo_sitemap_robots"], title: "SEO iyileştirilmeli", problem: "robots.txt yok", service: "SEO", priorityScore: 40, confidence: 0.9 }],
     });
     const out = await new svc.PublicAuditService(p, {}).poll(token, "https://panel.example");
     assert.equal(out.status, "completed");
     assert.equal(out.result.overallScore, 62);
-    assert.deepEqual(out.result.categories, [{ key: "search", label: "Arama ve Bulunabilirlik", score: 55 }]);
+    assert.deepEqual(out.result.categories, [{ key: "search", label: "Google'da bulunma", score: 55 }]);
     assert.equal(out.result.summary, "Başlık\n\nAnlatı");
-    assert.deepEqual(out.result.topOpportunities, [{ title: "SEO iyileştirilmeli", why: "robots.txt yok", recommendedService: "SEO" }]);
+    assert.deepEqual(out.result.topOpportunities, [{ title: "Google'a sitenizi tanıtan dosyalar eksik", why: "Bu dosyalar Google'ın tüm sayfalarınızı bulmasını hızlandırır.", recommendedService: "SEO" }]);
+    assert.equal(out.result.grade, "Geliştirilebilir");
     assert.equal(out.result.reportUrl, `https://panel.example/r/${svc.reportTokenFor(token)}`);
     assert.ok(!JSON.stringify(out).includes("priorityScore"));
   });

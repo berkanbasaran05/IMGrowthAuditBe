@@ -29,6 +29,7 @@ export function validateConfig(env: Record<string, string | undefined> = process
     googleOAuth: !!(env.GOOGLE_OAUTH_CLIENT_ID && env.GOOGLE_OAUTH_CLIENT_SECRET && env.GOOGLE_OAUTH_REDIRECT_URI),
     googleAds: !!env.GOOGLE_ADS_DEVELOPER_TOKEN,
     integrationEncryption: !!env.INTEGRATION_ENCRYPTION_KEY,
+    instagramBot: !!(env.IG_APP_SECRET && env.IG_VERIFY_TOKEN && env.IG_ACCESS_TOKEN && env.IG_ACCOUNT_ID),
     telegram: !!(env.TELEGRAM_BOT_TOKEN && env.TELEGRAM_CHAT_ID),
     payments: !!(env.IYZICO_API_KEY && env.IYZICO_SECRET_KEY) || (env.PAYMENT_PROVIDER === "mock" && !prod),
   };

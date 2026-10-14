@@ -1,13 +1,11 @@
 import type { PublicReport } from "./report.model.js";
+import { CONTACT, gradeOf } from "../audit/plain-language.js";
 
 // Müşteriye açık web raporu (sunucuda üretilen tek HTML sayfası). Tüm dinamik değerler kaçışlanır.
 
 const esc = (s: unknown) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]!));
 const pct = (v: number | null) => (v == null ? "–" : `%${Math.round(v * 100)}`);
 const band = (s: number | null) => (s == null ? "unk" : s >= 80 ? "ok" : s >= 60 ? "mid" : s >= 40 ? "warn" : "bad");
-const PRIORITY: Record<string, string> = { critical: "Kritik", high: "Yüksek etki", medium: "Orta", low: "Düşük" };
-const IMPACT: Record<string, string> = { high: "Yüksek", medium: "Orta", low: "Düşük" };
-const DIFF: Record<string, string> = { easy: "Kolay", medium: "Orta", hard: "Zor" };
 export const trDate = (iso: string) => new Date(iso).toLocaleDateString("tr-TR", { day: "numeric", month: "long", year: "numeric", timeZone: "Europe/Istanbul" });
 
 function gauge(score: number | null) {
@@ -59,9 +57,15 @@ h2{font-size:13px;letter-spacing:.08em;text-transform:uppercase;color:var(--subt
 .road h3{font-size:15px;margin-bottom:8px}.road li{font-size:13.5px;color:var(--muted);margin:0 0 8px 16px}.road li b{color:var(--ink);font-weight:600;display:block}
 .svc{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}.svc b{font-size:15px}.svc p{font-size:13.5px;color:var(--muted);margin-top:4px}
 .note{font-size:12.5px;color:var(--subtle);margin-top:8px}
+.grade{display:inline-block;margin-top:6px;font-size:13px;font-weight:700;padding:3px 10px;border-radius:99px}.grade.ok{background:var(--okbg);color:var(--ok)}.grade.mid{background:#eef0f3;color:var(--ink)}.grade.warn,.grade.bad,.grade.unk{background:var(--badbg);color:var(--bad)}
+.lead{font-size:15.5px;color:var(--ink)}.lead p+p{margin-top:8px}
+.num{display:inline-flex;width:24px;height:24px;border-radius:99px;background:var(--ink);color:#fff;font-size:12.5px;font-weight:800;align-items:center;justify-content:center;flex:none;margin-right:10px}
+.cta{background:var(--ink);color:#fff;border:0;margin-top:36px;padding:26px 24px}.cta h2{color:#fff;opacity:.7;margin:0 0 8px}.cta b{font-size:20px;letter-spacing:-.02em}.cta p{color:#c9cdd4;margin-top:6px}
+.cta .acts{display:flex;flex-wrap:wrap;gap:10px;margin-top:16px}.cta a{display:inline-flex;align-items:center;height:42px;padding:0 16px;border-radius:10px;font-weight:700;font-size:14px;text-decoration:none;background:#fff;color:var(--ink)}.cta a.wa{background:#1f8a4c;color:#fff}
+details.tech{margin-top:36px;font-size:13px;color:var(--muted)}details.tech summary{cursor:pointer;color:var(--subtle);font-weight:600}details.tech .card{margin-top:10px}details.tech h3{font-size:14px;margin:14px 0 6px;color:var(--ink)}
 footer{margin-top:40px;padding-top:16px;border-top:1px solid var(--line);font-size:12.5px;color:var(--subtle);display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap}
 .preview{background:var(--warnbg);color:var(--warn);font-weight:700;font-size:13px;text-align:center;padding:8px}
-@media print{body{background:#fff}.btn,.preview{display:none}.card{break-inside:avoid}h2{break-after:avoid}}
+@media print{body{background:#fff}.btn,.preview,.cta .acts,details.tech{display:none}.card{break-inside:avoid}h2{break-after:avoid}}
 </style></head><body>
 ${opts.preview ? `<div class="preview">İç önizleme — müşteri bu sayfayı yalnızca güvenli rapor bağlantısıyla görür.</div>` : ""}
 <div class="wrap">
@@ -69,27 +73,30 @@ ${opts.preview ? `<div class="preview">İç önizleme — müşteri bu sayfayı 
 <h1>${esc(r.company.name)}</h1>
 <p class="sub">${[r.company.sector, r.company.location, site].filter(Boolean).map(esc).join(" · ")}</p>
 
-<div class="card hero"><div class="g">${gauge(r.score)}<div class="v"><b>${r.score == null ? "–" : Math.round(r.score)}</b><span>Growth Score™ / 100</span></div></div>
-<div class="kv"><div><span>Veri kapsamı</span><b>${pct(r.coverage)}</b></div><div><span>Güven düzeyi</span><b>${pct(r.confidence)}</b></div><div><span>Denetim tarihi</span><b>${esc(trDate(r.auditDate))}</b></div><div><span>Puanlama sürümü</span><b>${esc(r.scoringVersion)}</b></div></div></div>
-<p class="note">Growth Score, sitenin dijital olgunluğunu altı kategoride 0–100 arasında ölçer. Ölçülemeyen metrikler sıfır sayılmaz; kapsam ayrıca gösterilir.</p>
+<div class="card hero"><div class="g">${gauge(r.score)}<div class="v"><b>${r.score == null ? "–" : Math.round(r.score)}</b><span>/ 100</span></div></div>
+<div><b style="font-size:18px">Web sitenizin genel puanı</b><div><span class="grade ${band(r.score)}">${esc(gradeOf(r.score))}</span></div><p class="note" style="font-size:13.5px">Sitenizi altı başlıkta inceledik: marka mesajı, kullanım kolaylığı, hız, Google'da bulunma, müşteriye dönüştürme ve güven. 80 ve üzeri iyi, 60–79 geliştirilebilir, 60'ın altı acil iyileştirme gerektirir.</p></div></div>
 
-${r.summary ? `<h2>Yönetici özeti</h2><div class="card"><b style="font-size:17px">${esc(r.summary.headline)}</b><p style="margin-top:8px">${esc(r.summary.narrative)}</p></div>` : ""}
+${r.summary ? `<h2>Kısaca durum</h2><div class="card lead"><b style="font-size:17px">${esc(r.summary.headline)}</b><p style="margin-top:8px;color:var(--muted)">${esc(r.summary.narrative)}</p></div>` : ""}
 
-<h2>Kategori puanları</h2>
-<div class="card bars">${r.categories.map((c) => `<div class="bar ${band(c.score)}"><div class="h"><span>${esc(c.name)} <small>· ağırlık %${c.weight}</small></span><b>${c.score == null ? "–" : Math.round(c.score)}</b></div><div class="t"><i style="width:${c.score == null ? 0 : Math.max(2, c.score)}%"></i></div><small>Kapsam ${pct(c.coverage)}</small></div>`).join("")}</div>
+<h2>Başlık başlık puanlar</h2>
+<div class="card bars">${r.categories.map((c) => `<div class="bar ${band(c.score)}"><div class="h"><span>${esc(c.name)}</span><b>${c.score == null ? "–" : Math.round(c.score)}</b></div><div class="t"><i style="width:${c.score == null ? 0 : Math.max(2, c.score)}%"></i></div></div>`).join("")}</div>
 
-${r.opportunities.length ? `<h2>Öncelikli büyüme fırsatları</h2><div class="list">${r.opportunities.slice(0, 8).map((o) => `<div class="card item"><h3>${esc(o.title)}<span class="tag ${esc(o.priority)}">${esc(PRIORITY[o.priority] || o.priority)}</span></h3><p>${esc(o.problem)}</p><div class="do"><b>Önerilen adım:</b> ${esc(o.action)}</div><div class="tags"><span class="tag">Etki: ${esc(IMPACT[o.impact] || o.impact)}</span><span class="tag">Zorluk: ${esc(DIFF[o.difficulty] || o.difficulty)}</span><span class="tag">${o.basis === "observed" ? "Ölçülmüş bulgu" : "Değerlendirme"}</span>${o.service ? `<span class="tag">${esc(o.service)}</span>` : ""}</div></div>`).join("")}</div>` : ""}
+${r.opportunities.length ? `<h2>Önce bunları düzeltin</h2><div class="list">${r.opportunities.slice(0, 5).map((o, i) => `<div class="card item"><h3><span style="display:flex;align-items:flex-start"><span class="num">${i + 1}</span>${esc(o.title)}</span>${o.priority === "critical" || o.priority === "high" ? `<span class="tag ${esc(o.priority)}">${o.priority === "critical" ? "Acil" : "Önemli"}</span>` : ""}</h3><p>${esc(o.why)}</p><div class="do"><b>Ne yapmalı:</b> ${esc(o.action)}</div></div>`).join("")}</div>` : ""}
 
-${r.roadmap.some((p) => p.items.length) ? `<h2>30 / 60 / 90 günlük yol haritası</h2><div class="road">${r.roadmap.map((p) => `<div class="card"><h3>${esc(p.phase)}</h3>${p.items.length ? `<ul>${p.items.map((i) => `<li><b>${esc(i.title)}</b>${esc(i.action)}</li>`).join("")}</ul>` : `<p class="note">Bu dönem için ek iş öngörülmedi.</p>`}</div>`).join("")}</div>` : ""}
+${r.roadmap.some((p) => p.items.length) ? `<h2>Adım adım plan</h2><div class="road">${r.roadmap.map((p) => `<div class="card"><h3>${esc(p.phase)}</h3>${p.items.length ? `<ul>${p.items.map((i) => `<li><b>${esc(i.title)}</b></li>`).join("")}</ul>` : `<p class="note">Bu dönem için ek iş yok.</p>`}</div>`).join("")}</div>` : ""}
 
-${r.services.length ? `<h2>Önerilen Istanbul Marketing hizmetleri</h2><div class="svc">${r.services.map((s) => `<div class="card"><b>${esc(s.name)}</b><p>${s.reasons.map(esc).join(" · ")}</p></div>`).join("")}</div>` : ""}
+${r.strengths.length ? `<h2>İyi giden şeyler</h2><div class="card"><ul class="obs" style="margin:0">${r.strengths.map((s) => `<li><b>${esc(s.name)}</b></li>`).join("")}</ul></div>` : ""}
 
-${r.findings.length ? `<h2>Kanıta dayalı bulgular</h2><div class="list">${r.findings.map((f) => `<div class="card item"><h3>${esc(f.name)}<span class="sc">${f.score}</span></h3><p>${esc(f.category)} · ${f.state === "MEASURED" ? "Ölçüldü" : "Tahmini"}</p><ul class="obs">${f.observations.map((o) => `<li><b>${esc(o.source)}:</b> ${esc(o.text)}</li>`).join("")}</ul>${f.recommendation ? `<div class="do"><b>Öneri:</b> ${esc(f.recommendation)}</div>` : ""}</div>`).join("")}</div>` : ""}
+<div class="card cta"><h2>Sonraki adım</h2><b>Bu sorunları birlikte çözelim</b><p>Raporu 15 dakikalık ücretsiz bir görüşmede sizinle birlikte gözden geçirelim; hangi işin önce yapılması gerektiğini netleştirelim.</p>
+<div class="acts"><a class="wa" href="https://wa.me/${esc(CONTACT.whatsapp)}" rel="noopener noreferrer" target="_blank">WhatsApp'tan yazın</a><a href="tel:${esc(CONTACT.phone)}">Arayın: ${esc(CONTACT.phoneDisplay)}</a><a href="mailto:${esc(CONTACT.email)}">${esc(CONTACT.email)}</a></div></div>
 
-${r.strengths.length ? `<h2>Güçlü yönler</h2><div class="card"><ul class="obs" style="margin:0">${r.strengths.map((s) => `<li><b>${esc(s.name)} (${s.score}):</b> ${esc(s.observation)}</li>`).join("")}</ul></div>` : ""}
+<details class="tech"><summary>Teknik detaylar</summary><div class="card">
+<div class="kv"><div><span>Analiz tarihi</span><b>${esc(trDate(r.auditDate))}</b></div><div><span>Veri kapsamı</span><b>${pct(r.coverage)}</b></div><div><span>Güven düzeyi</span><b>${pct(r.confidence)}</b></div><div><span>Puanlama sürümü</span><b>${esc(r.scoringVersion)}</b></div></div>
+${r.services.length ? `<h3>Önerilen hizmetler</h3><p>${r.services.map((s) => esc(s.name)).join(" · ")}</p>` : ""}
+${r.findings.length ? `<h3>Kontrol ayrıntıları</h3><ul class="obs">${r.findings.map((f) => `<li><b>${esc(f.name)} (${f.score}/100):</b> ${f.observations.map((o) => `${esc(o.source)} — ${esc(o.text)}`).join("; ")}</li>`).join("")}</ul>` : ""}
+<h3>Notlar</h3><ul class="obs">${r.limitations.map((l) => `<li>${esc(l)}</li>`).join("")}</ul>
+</div></details>
 
-<h2>Kapsam ve sınırlamalar</h2><div class="card"><ul class="obs" style="margin:0">${r.limitations.map((l) => `<li>${esc(l)}</li>`).join("")}</ul></div>
-
-<footer><span>© Istanbul Marketing · istanbul.marketing</span><span>Istanbul Marketing Growth Audit™ · ${esc(r.scoringVersion)}</span></footer>
+<footer><span>© Istanbul Marketing · <a href="${CONTACT.site}" style="color:inherit">istanbul.marketing</a></span><span>Growth Audit™ · ${esc(trDate(r.auditDate))}</span></footer>
 </div></body></html>`;
 }

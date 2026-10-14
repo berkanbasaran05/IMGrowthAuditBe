@@ -2,7 +2,7 @@
 
 export const SCORING_VERSION = "gs-1.0";
 export const RUBRIC_VERSION = "rubric-1.0";
-export const PROMPT_VERSION = "analyst-1.0";
+export const PROMPT_VERSION = "analyst-1.1";
 
 export type CategoryId = "brand" | "experience" | "technology" | "search" | "conversion" | "trust";
 export type MetricState = "MEASURED" | "ESTIMATED" | "UNKNOWN" | "NOT_APPLICABLE" | "FAILED";

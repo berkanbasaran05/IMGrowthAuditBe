@@ -3,7 +3,7 @@ import { PrismaService } from "../../infrastructure/prisma/prisma.service.js";
 import { getOne } from "../growth/lib/redis.js";
 import type { AuditOutcome } from "./audit.runner.js";
 import { toScored } from "./audit.runner.js";
-import { CATEGORIES, LeadInfo, MetricResult, RUBRIC_VERSION, SCORING_VERSION, ScoredMetric } from "./audit.types.js";
+import { CATEGORIES, LeadInfo, MetricResult, PROMPT_VERSION, RUBRIC_VERSION, SCORING_VERSION, ScoredMetric } from "./audit.types.js";
 import { METRICS } from "./metrics.js";
 import { buildOpportunities } from "./opportunities.js";
 import { computeGrowthScore } from "./scoring.js";
@@ -97,7 +97,7 @@ export class AuditService {
         where: { id },
         data: {
           status: outcome.status, stage: null, progress: 100, finalUrl: outcome.finalUrl, overallScore: score.overall, coverage: score.coverage, confidence: score.confidence,
-          categoryScores: score.categories as any, summary: (outcome.summary ?? undefined) as any, aiModel: outcome.aiModel, promptVersion: outcome.aiModel ? "analyst-1.0" : null,
+          categoryScores: score.categories as any, summary: (outcome.summary ?? undefined) as any, aiModel: outcome.aiModel, promptVersion: outcome.aiModel ? PROMPT_VERSION : null,
           usage: outcome.usage as any, error: outcome.note ?? null, finishedAt: new Date(), updatedAt: new Date(),
         },
       }),

@@ -42,14 +42,14 @@ describe("Müşteri raporu modeli", () => {
     for (const secret of ["GİZLİ SATIŞ NOTU", "sekreter sert", "İÇ NOT", "Ayşe", "88", "info@ornek.com"]) assert.ok(!json.includes(secret), secret);
   });
   it("gizlenen fırsatı çıkarır, 30/60/90 planı zorluğa göre böler", () => {
-    assert.deepEqual(r.opportunities.map((o) => o.title), ["seo_sitemap_robots iyileştirilmeli", "conv_tracking_readiness iyileştirilmeli", "tech_core_web_vitals iyileştirilmeli"]);
+    assert.deepEqual(r.opportunities.map((o) => o.title), ["Google'a sitenizi tanıtan dosyalar eksik", "Siteden kaç müşteri geldiği ölçülemiyor", "Sayfa açılırken kullanıcılar bekliyor veya içerik kayıyor"]);
     assert.deepEqual(r.roadmap.map((p) => p.items.length), [1, 1, 1]);
     assert.equal(r.roadmap[0].phase, "İlk 30 gün");
   });
   it("yalnızca kanıtlı ve 70 altı metrikleri bulgu, 80+ olanları güçlü yön sayar; eksik veriyi açıklar", () => {
     assert.deepEqual(r.findings.map((f) => f.score), [50]);
     assert.deepEqual(r.strengths.map((s) => s.score), [90]);
-    assert.ok(r.limitations[0].includes("1 metrik"));
+    assert.ok(r.limitations[0].includes("1 kontrol"));
   });
   it("hizmet önerilerini fırsatlardan türetir", () => {
     assert.deepEqual(r.services.map((s) => s.name).sort(), ["Google Ads", "SEO", "Web sitesi"]);

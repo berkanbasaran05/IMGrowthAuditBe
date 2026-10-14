@@ -9,7 +9,7 @@ import { PublicAuditError, PublicAuditService, publicMessage, validatePublicAudi
 // "api/:endpoint" yakalayıcısıyla çakışmaz. CORS yalnızca PUBLIC_AUDIT_ORIGINS listesindeki kökenlere açılır.
 
 const MAX_BODY = 8_192;
-const START_LIMIT = 5, START_WINDOW = 3_600_000; // IP başına saatte 5 başlatma
+const START_LIMIT = 3, START_WINDOW = 3_600_000; // IP başına saatte 3 başlatma (iletişim bilgisi zorunlu değil)
 const POLL_LIMIT = 60, POLL_WINDOW = 60_000; // IP başına dakikada 60 sorgu
 
 export const allowedOrigins = () => (process.env.PUBLIC_AUDIT_ORIGINS || "").split(",").map((o) => o.trim().replace(/\/$/, "")).filter(Boolean);

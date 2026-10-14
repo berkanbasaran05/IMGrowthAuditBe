@@ -524,3 +524,27 @@ model PublicAuditRequest {
   @@index([leadId, createdAt(sort: Desc)], map: "public_audit_requests_lead_created_idx")
   @@map("public_audit_requests")
 }
+
+// Instagram DM analiz botu: konuşma durumu (IGSID başına tek satır). Sunucu yeniden başlasa da bekleyen sonuçlar gönderilir.
+model IgConversation {
+  igsid         String    @id @db.VarChar(64)
+  username      String?   @db.VarChar(80)
+  state         String    @default("idle") @db.VarChar(20)
+  domain        String?   @db.VarChar(255)
+  leadId        String?   @map("lead_id") @db.VarChar(120)
+  auditId       String?   @map("audit_id") @db.Uuid
+  publicToken   String?   @map("public_token") @db.VarChar(64)
+  lastScore     Int?      @map("last_score")
+  lastMid       String?   @map("last_mid") @db.VarChar(255)
+  auditsDay     String?   @map("audits_day") @db.Char(10)
+  auditsToday   Int       @default(0) @map("audits_today")
+  auditsTotal   Int       @default(0) @map("audits_total")
+  messagesIn    Int       @default(0) @map("messages_in")
+  handoffUntil  DateTime? @map("handoff_until") @db.Timestamptz(6)
+  lastInboundAt DateTime? @map("last_inbound_at") @db.Timestamptz(6)
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt     DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([state, updatedAt], map: "ig_conversations_state_updated_idx")
+  @@map("ig_conversations")
+}

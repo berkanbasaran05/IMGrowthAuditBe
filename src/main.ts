@@ -17,7 +17,7 @@ async function bootstrap() {
   }
 
   const { AppModule } = await import("./app.module.js");
-  const app = await NestFactory.create(AppModule, { logger: ["error", "warn", "log"] });
+  const app = await NestFactory.create(AppModule, { logger: ["error", "warn", "log"], rawBody: true });
   // Ters vekil arkasında gerçek istemci IP'si: TRUST_PROXY_HOPS (varsayılan 1 = Next.js vekili). Hız sınırları req.ip kullanır.
   app.getHttpAdapter().getInstance().set("trust proxy", Number(process.env.TRUST_PROXY_HOPS ?? 1));
   app.getHttpAdapter().getInstance().disable("x-powered-by");

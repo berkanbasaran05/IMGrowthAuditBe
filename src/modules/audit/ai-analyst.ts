@@ -65,7 +65,14 @@ Kurallar:
 - Kanıt metriği değerlendirmeye yetmiyorsa assessable=false, score=0, confidence=0 ver ve nedenini yaz.
 - Rubrikteki ölçeği kullan; confidence 0-1 arası, kanıtın ne kadar doğrudan olduğunu yansıtsın.
 - Öneriler somut, uygulanabilir ve abartısız olsun; garanti, gelir kaybı veya sektör ortalaması gibi doğrulanamayan iddialar yazma.
-- Tüm metinleri Türkçe yaz.`;
+- Tüm metinleri Türkçe yaz.
+
+Yönetici özeti (summary) kuralları — okuyucu teknik bilgisi olmayan bir işletme sahibidir:
+- Günlük, sade ve profesyonel Türkçe kullan; kısa cümleler kur. Pazarlama ve yazılım jargonu kullanma: "CTA", "H1", "hero", "değer önerisi", "dönüşüm yolu", "Core Web Vitals", "SEO", "meta", "UX", "landing page", "funnel" gibi terimler yazma. Gerekirse "arama butonu", "ana sayfanın ilk görünen kısmı", "Google'da bulunma", "size ulaşma yolu" gibi herkesin anlayacağı ifadeler kullan.
+- headline: tek kısa cümle, en fazla 12 kelime.
+- narrative: en fazla 3 kısa cümle ve bu sırayla: (1) sitede iyi olan şey, (2) en büyük sorun ve müşteriye etkisi, (3) ilk yapılması gereken iş.
+- strengths ve weaknesses maddeleri de aynı sade dille, her biri tek kısa cümle olsun.
+- Metrik "reason" ve "recommendation" alanlarını da mümkün olduğunca sade yaz; recommendation işletme sahibinin anlayacağı somut bir adım olsun.`;
 
 function evidencePack(ctx: AuditContext) {
   const pages = ctx.crawl.pages.map((p) => ({
