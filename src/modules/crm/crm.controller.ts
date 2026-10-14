@@ -1,5 +1,6 @@
 import { All, Body, Controller, Get, Param, Patch, Post, Req, Res } from "@nestjs/common";
 import type { Request, Response } from "express";
+import { publicMessage } from "../../infrastructure/http/http-hardening.js";
 import { isAuthed } from "../growth/lib/auth.js";
 import { CrmService } from "./crm.service.js";
 
@@ -10,7 +11,7 @@ export class CrmController {
   private async run(req: Request, res: Response, work: () => Promise<any>) {
     if (!isAuthed(req)) return res.status(401).json({ error: "Giriş gerekli" });
     try { return res.status(200).json(await work()); }
-    catch (error: any) { return res.status(/bulunamadı/i.test(error.message) ? 404 : 400).json({ error: error.message }); }
+    catch (error: any) { return res.status(/bulunamadı/i.test(error.message) ? 404 : 400).json({ error: publicMessage(error) }); }
   }
 
   @Get()

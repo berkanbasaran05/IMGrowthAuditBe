@@ -1,0 +1,509 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model Customer {
+  id          String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  leadId      String?    @unique @map("lead_id") @db.VarChar(120)
+  name        String     @db.VarChar(120)
+  contactName String?    @map("contact_name") @db.VarChar(100)
+  email       String?    @db.VarChar(120)
+  phone       String?    @db.VarChar(40)
+  sector      String?    @db.VarChar(100)
+  ownerName   String?    @map("owner_name") @db.VarChar(80)
+  status      String     @default("onboarding") @db.VarChar(24)
+  notes       String?
+  createdAt   DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime   @default(now()) @map("updated_at") @db.Timestamptz(6)
+  contracts   Contract[]
+  payments    Payment[]
+  tasks       Task[]
+  activities  Activity[]
+
+  @@map("customers")
+}
+
+model Contract {
+  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  customerId   String    @map("customer_id") @db.Uuid
+  title        String    @db.VarChar(160)
+  services     Json      @default("[]")
+  value        Decimal   @default(0) @db.Decimal(14, 2)
+  monthlyValue Decimal   @default(0) @map("monthly_value") @db.Decimal(14, 2)
+  currency     String    @default("TRY") @db.Char(3)
+  billing      String    @default("one_time") @db.VarChar(20)
+  status       String    @default("draft") @db.VarChar(20)
+  startDate    DateTime? @map("start_date") @db.Date
+  endDate      DateTime? @map("end_date") @db.Date
+  signedAt     DateTime? @map("signed_at") @db.Date
+  documentUrl  String?   @map("document_url")
+  notes        String?
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
+  customer     Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  payments     Payment[]
+
+  @@index([customerId], map: "contracts_customer_id_idx")
+  @@map("contracts")
+}
+
+model Payment {
+  id         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  customerId String    @map("customer_id") @db.Uuid
+  contractId String?   @map("contract_id") @db.Uuid
+  amount     Decimal   @db.Decimal(14, 2)
+  currency   String    @default("TRY") @db.Char(3)
+  status     String    @default("planned") @db.VarChar(20)
+  dueDate    DateTime? @map("due_date") @db.Date
+  paidAt     DateTime? @map("paid_at") @db.Date
+  invoiceNo  String?   @map("invoice_no") @db.VarChar(80)
+  notes      String?
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt  DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
+  customer   Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  contract   Contract? @relation(fields: [contractId], references: [id], onDelete: SetNull)
+  links        PaymentLink[]
+  transactions PaymentTransaction[]
+
+  @@index([customerId], map: "payments_customer_id_idx")
+  @@index([dueDate, status], map: "payments_due_status_idx")
+  @@map("payments")
+}
+
+model Task {
+  id         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  customerId String    @map("customer_id") @db.Uuid
+  title      String    @db.VarChar(180)
+  assignee   String?   @db.VarChar(80)
+  dueDate    DateTime? @map("due_date") @db.Date
+  status     String    @default("todo") @db.VarChar(20)
+  notes      String?
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt  DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
+  customer   Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@index([customerId, status], map: "tasks_customer_id_status_idx")
+  @@map("tasks")
+}
+
+model Activity {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  customerId String   @map("customer_id") @db.Uuid
+  type       String   @default("note") @db.VarChar(50)
+  summary    String
+  occurredAt DateTime @default(now()) @map("occurred_at") @db.Timestamptz(6)
+  createdBy  String?  @map("created_by") @db.VarChar(80)
+  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@index([customerId, occurredAt(sort: Desc)], map: "activities_customer_id_occurred_idx")
+  @@map("activities")
+}
+
+model KeyValue {
+  key       String    @id
+  value     String
+  expiresAt DateTime? @map("expires_at") @db.Timestamptz(6)
+
+  @@index([expiresAt], map: "key_values_expiry_idx")
+  @@map("key_values")
+}
+
+model HashValue {
+  bucket String
+  field  String
+  value  String
+
+  @@id([bucket, field])
+  @@map("hash_values")
+}
+
+model ListValue {
+  sequence  BigInt   @id @default(autoincrement())
+  key       String
+  value     String
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([key, sequence(sort: Desc)], map: "list_values_key_sequence_idx")
+  @@map("list_values")
+}
+
+// ---------------------------------------------------------------------------
+// Growth Audit™ — firmaların (leads) dijital olgunluk denetimi.
+// Firma kayıtları hash_values("leads") içinde tutulduğu için lead_id yabancı anahtar değildir.
+// ---------------------------------------------------------------------------
+
+model GrowthAudit {
+  id              String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  leadId          String               @map("lead_id") @db.VarChar(120)
+  status          String               @default("queued") @db.VarChar(24)
+  stage           String?              @db.VarChar(60)
+  progress        Int                  @default(0) @db.SmallInt
+  websiteUrl      String?              @map("website_url")
+  finalUrl        String?              @map("final_url")
+  scoringVersion  String               @map("scoring_version") @db.VarChar(20)
+  overallScore    Decimal?             @map("overall_score") @db.Decimal(5, 2)
+  coverage        Decimal?             @db.Decimal(4, 3)
+  confidence      Decimal?             @db.Decimal(4, 3)
+  categoryScores  Json                 @default("[]") @map("category_scores")
+  summary         Json?
+  aiModel         String?              @map("ai_model") @db.VarChar(60)
+  promptVersion   String?              @map("prompt_version") @db.VarChar(20)
+  usage           Json                 @default("{}")
+  attempts        Int                  @default(0) @db.SmallInt
+  maxAttempts     Int                  @default(3) @map("max_attempts") @db.SmallInt
+  nextAttemptAt   DateTime?            @map("next_attempt_at") @db.Timestamptz(6)
+  error           String?
+  triggeredBy     String?              @map("triggered_by") @db.VarChar(80)
+  startedAt       DateTime?            @map("started_at") @db.Timestamptz(6)
+  finishedAt      DateTime?            @map("finished_at") @db.Timestamptz(6)
+  createdAt       DateTime             @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime             @default(now()) @map("updated_at") @db.Timestamptz(6)
+  metrics         AuditMetricResult[]
+  evidence        AuditEvidence[]
+  opportunities   GrowthOpportunity[]
+  reviews         AuditReview[]
+  reports         AuditReport[]
+  drafts          SalesDraft[]
+
+  @@index([leadId, createdAt(sort: Desc)], map: "growth_audits_lead_created_idx")
+  @@index([status, nextAttemptAt], map: "growth_audits_status_next_idx")
+  @@map("growth_audits")
+}
+
+model AuditMetricResult {
+  id             String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  auditId        String      @map("audit_id") @db.Uuid
+  metricId       String      @map("metric_id") @db.VarChar(60)
+  category       String      @db.VarChar(40)
+  weight         Decimal     @db.Decimal(6, 3)
+  method         String      @db.VarChar(20)
+  state          String      @db.VarChar(20)
+  originalScore  Decimal?    @map("original_score") @db.Decimal(5, 2)
+  reviewerScore  Decimal?    @map("reviewer_score") @db.Decimal(5, 2)
+  finalScore     Decimal?    @map("final_score") @db.Decimal(5, 2)
+  confidence     Decimal?    @db.Decimal(4, 3)
+  reason         String?
+  recommendation String?
+  evidence       Json        @default("[]")
+  rubricVersion  String      @map("rubric_version") @db.VarChar(20)
+  modelVersion   String?     @map("model_version") @db.VarChar(60)
+  promptVersion  String?     @map("prompt_version") @db.VarChar(20)
+  reviewReason   String?     @map("review_reason")
+  evaluatedAt    DateTime    @default(now()) @map("evaluated_at") @db.Timestamptz(6)
+  audit          GrowthAudit @relation(fields: [auditId], references: [id], onDelete: Cascade)
+
+  @@unique([auditId, metricId], map: "audit_metric_results_audit_metric_key")
+  @@map("audit_metric_results")
+}
+
+model AuditEvidence {
+  id         String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  auditId    String      @map("audit_id") @db.Uuid
+  kind       String      @db.VarChar(30)
+  sourceUrl  String?     @map("source_url")
+  title      String?     @db.VarChar(200)
+  data       Json        @default("{}")
+  capturedAt DateTime    @default(now()) @map("captured_at") @db.Timestamptz(6)
+  audit      GrowthAudit @relation(fields: [auditId], references: [id], onDelete: Cascade)
+
+  @@index([auditId, kind], map: "audit_evidence_audit_kind_idx")
+  @@map("audit_evidence")
+}
+
+model GrowthOpportunity {
+  id            String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  auditId       String      @map("audit_id") @db.Uuid
+  leadId        String      @map("lead_id") @db.VarChar(120)
+  metricIds     Json        @default("[]") @map("metric_ids")
+  title         String      @db.VarChar(200)
+  problem       String
+  evidence      Json        @default("[]")
+  impact        String      @db.VarChar(20)
+  basis         String      @default("observed") @db.VarChar(20)
+  confidence    Decimal     @db.Decimal(4, 3)
+  difficulty    String      @db.VarChar(20)
+  action        String
+  service       String?     @db.VarChar(80)
+  priorityScore Int         @map("priority_score") @db.SmallInt
+  priorityGroup String      @map("priority_group") @db.VarChar(20)
+  status        String      @default("open") @db.VarChar(20)
+  createdAt     DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
+  audit         GrowthAudit @relation(fields: [auditId], references: [id], onDelete: Cascade)
+
+  @@index([auditId, priorityScore(sort: Desc)], map: "growth_opportunities_audit_priority_idx")
+  @@index([leadId, status], map: "growth_opportunities_lead_status_idx")
+  @@map("growth_opportunities")
+}
+
+model AuditReview {
+  id            String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  auditId       String      @map("audit_id") @db.Uuid
+  metricId      String      @map("metric_id") @db.VarChar(60)
+  previousScore Decimal?    @map("previous_score") @db.Decimal(5, 2)
+  reviewerScore Decimal?    @map("reviewer_score") @db.Decimal(5, 2)
+  reason        String
+  reviewer      String?     @db.VarChar(80)
+  createdAt     DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
+  audit         GrowthAudit @relation(fields: [auditId], references: [id], onDelete: Cascade)
+
+  @@index([auditId, metricId], map: "audit_reviews_audit_metric_idx")
+  @@map("audit_reviews")
+}
+
+// Müşteriye açık rapor bağlantısı. Belirteç (token) yalnızca SHA-256 özeti olarak saklanır;
+// bağlantı oluşturulduğu anda bir kez gösterilir. Süre dolumu ve iptal desteklenir.
+model AuditReport {
+  id           String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  auditId      String      @map("audit_id") @db.Uuid
+  leadId       String      @map("lead_id") @db.VarChar(120)
+  tokenHash    String      @unique @map("token_hash") @db.Char(64)
+  tokenHint    String      @map("token_hint") @db.VarChar(12)
+  createdBy    String?     @map("created_by") @db.VarChar(80)
+  expiresAt    DateTime    @map("expires_at") @db.Timestamptz(6)
+  revokedAt    DateTime?   @map("revoked_at") @db.Timestamptz(6)
+  lastViewedAt DateTime?   @map("last_viewed_at") @db.Timestamptz(6)
+  viewCount    Int         @default(0) @map("view_count")
+  createdAt    DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
+  audit        GrowthAudit @relation(fields: [auditId], references: [id], onDelete: Cascade)
+
+  @@index([leadId, createdAt(sort: Desc)], map: "audit_reports_lead_created_idx")
+  @@map("audit_reports")
+}
+
+// AI veya şablonla üretilen satış taslakları (e-posta, arama brifi). Hiçbiri otomatik gönderilmez;
+// "applied" yalnızca kullanıcı onayıyla firmanın hazır metnine aktarıldığını gösterir.
+model SalesDraft {
+  id            String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  leadId        String       @map("lead_id") @db.VarChar(120)
+  auditId       String?      @map("audit_id") @db.Uuid
+  kind          String       @db.VarChar(20)
+  status        String       @default("draft") @db.VarChar(20)
+  source        String       @db.VarChar(20)
+  content       Json
+  edited        Boolean      @default(false)
+  model         String?      @db.VarChar(60)
+  promptVersion String?      @map("prompt_version") @db.VarChar(20)
+  usage         Json         @default("{}")
+  createdBy     String?      @map("created_by") @db.VarChar(80)
+  appliedAt     DateTime?    @map("applied_at") @db.Timestamptz(6)
+  createdAt     DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt     DateTime     @default(now()) @map("updated_at") @db.Timestamptz(6)
+  audit         GrowthAudit? @relation(fields: [auditId], references: [id], onDelete: SetNull)
+
+  @@index([leadId, kind, createdAt(sort: Desc)], map: "sales_drafts_lead_kind_created_idx")
+  @@map("sales_drafts")
+}
+
+// ---------------------------------------------------------------------------
+// AI Growth Manager™ — müşteri portalı. Her kayıt organization_id ile kiracıya bağlıdır;
+// portal sorguları yalnızca oturumdaki organizasyonla filtrelenir.
+// ---------------------------------------------------------------------------
+
+model CustomerOrganization {
+  id           String                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name         String                @db.VarChar(120)
+  slug         String                @unique @db.VarChar(80)
+  customerId   String?               @map("customer_id") @db.Uuid
+  leadId       String?               @map("lead_id") @db.VarChar(120)
+  status       String                @default("active") @db.VarChar(20)
+  isDemo       Boolean               @default(false) @map("is_demo")
+  timezone     String                @default("Europe/Istanbul") @db.VarChar(40)
+  currency     String                @default("TRY") @db.Char(3)
+  createdAt    DateTime              @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime              @default(now()) @map("updated_at") @db.Timestamptz(6)
+  users        CustomerUser[]
+  integrations CustomerIntegration[]
+  insights     AiInsight[]
+  briefs       DailyBrief[]
+  actions      ActionProposal[]
+
+  @@map("customer_organizations")
+}
+
+model CustomerUser {
+  id              String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId  String               @map("organization_id") @db.Uuid
+  email           String               @unique @db.VarChar(160)
+  name            String?              @db.VarChar(120)
+  role            String               @default("viewer") @db.VarChar(20)
+  status          String               @default("invited") @db.VarChar(20)
+  passwordHash    String?              @map("password_hash")
+  inviteTokenHash String?              @unique @map("invite_token_hash") @db.Char(64)
+  inviteExpiresAt DateTime?            @map("invite_expires_at") @db.Timestamptz(6)
+  sessionVersion  Int                  @default(1) @map("session_version")
+  failedLogins    Int                  @default(0) @map("failed_logins")
+  lockedUntil     DateTime?            @map("locked_until") @db.Timestamptz(6)
+  lastLoginAt     DateTime?            @map("last_login_at") @db.Timestamptz(6)
+  createdAt       DateTime             @default(now()) @map("created_at") @db.Timestamptz(6)
+  organization    CustomerOrganization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId], map: "customer_users_org_idx")
+  @@map("customer_users")
+}
+
+model CustomerIntegration {
+  id                   String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId       String               @map("organization_id") @db.Uuid
+  provider             String               @db.VarChar(30)
+  status               String               @default("pending") @db.VarChar(20)
+  externalAccountId    String?              @map("external_account_id") @db.VarChar(200)
+  displayName          String?              @map("display_name") @db.VarChar(200)
+  encryptedCredentials String?              @map("encrypted_credentials")
+  scopes               String?
+  connectedBy          String?              @map("connected_by") @db.VarChar(160)
+  connectedAt          DateTime?            @map("connected_at") @db.Timestamptz(6)
+  lastSyncAt           DateTime?            @map("last_sync_at") @db.Timestamptz(6)
+  lastError            String?              @map("last_error")
+  consecutiveFailures  Int                  @default(0) @map("consecutive_failures")
+  createdAt            DateTime             @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt            DateTime             @default(now()) @map("updated_at") @db.Timestamptz(6)
+  organization         CustomerOrganization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  syncs                IntegrationSync[]
+
+  @@unique([organizationId, provider], map: "customer_integrations_org_provider_key")
+  @@map("customer_integrations")
+}
+
+model IntegrationSync {
+  id            String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  integrationId String              @map("integration_id") @db.Uuid
+  status        String              @db.VarChar(20)
+  rangeStart    DateTime?           @map("range_start") @db.Date
+  rangeEnd      DateTime?           @map("range_end") @db.Date
+  rows          Int                 @default(0)
+  error         String?
+  startedAt     DateTime            @default(now()) @map("started_at") @db.Timestamptz(6)
+  finishedAt    DateTime?           @map("finished_at") @db.Timestamptz(6)
+  integration   CustomerIntegration @relation(fields: [integrationId], references: [id], onDelete: Cascade)
+
+  @@index([integrationId, startedAt(sort: Desc)], map: "integration_syncs_integration_started_idx")
+  @@map("integration_syncs")
+}
+
+// Kaynaklardan gelen günlük metrikler tek biçimde tutulur (hesap, kampanya, sorgu, sayfa boyutları).
+model MetricDaily {
+  organizationId String   @map("organization_id") @db.Uuid
+  source         String   @db.VarChar(30)
+  date           DateTime @db.Date
+  dimensionType  String   @map("dimension_type") @db.VarChar(20)
+  dimensionKey   String   @map("dimension_key") @db.VarChar(300)
+  dimensionLabel String?  @map("dimension_label") @db.VarChar(300)
+  metrics        Json
+  updatedAt      DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  @@id([organizationId, source, date, dimensionType, dimensionKey])
+  @@index([organizationId, source, dimensionType, date], map: "metric_daily_org_source_type_date_idx")
+  @@map("metric_daily")
+}
+
+model AiInsight {
+  id              String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId  String               @map("organization_id") @db.Uuid
+  kind            String               @db.VarChar(30)
+  detector        String               @db.VarChar(60)
+  category        String               @db.VarChar(30)
+  severity        String               @db.VarChar(20)
+  title           String               @db.VarChar(200)
+  explanation     String
+  evidence        Json                 @default("[]")
+  assumptions     Json                 @default("[]")
+  confidence      Decimal              @db.Decimal(4, 3)
+  estimatedImpact Json?                @map("estimated_impact")
+  suggestedAction String               @map("suggested_action")
+  priority        Int                  @db.SmallInt
+  status          String               @default("open") @db.VarChar(20)
+  fingerprint     String               @db.VarChar(200)
+  periodStart     DateTime             @map("period_start") @db.Date
+  periodEnd       DateTime             @map("period_end") @db.Date
+  detectedAt      DateTime             @default(now()) @map("detected_at") @db.Timestamptz(6)
+  updatedAt       DateTime             @default(now()) @map("updated_at") @db.Timestamptz(6)
+  organization    CustomerOrganization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, fingerprint], map: "ai_insights_org_fingerprint_key")
+  @@index([organizationId, status, priority(sort: Desc)], map: "ai_insights_org_status_priority_idx")
+  @@map("ai_insights")
+}
+
+model DailyBrief {
+  id             String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId String               @map("organization_id") @db.Uuid
+  briefDate      DateTime             @map("brief_date") @db.Date
+  content        Json
+  source         String               @db.VarChar(20)
+  model          String?              @db.VarChar(60)
+  usage          Json                 @default("{}")
+  createdAt      DateTime             @default(now()) @map("created_at") @db.Timestamptz(6)
+  organization   CustomerOrganization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, briefDate], map: "daily_briefs_org_date_key")
+  @@map("daily_briefs")
+}
+
+// Eylem motoru (V1): yapay zekâ yalnızca taslak eylem önerir; dış sistemde değişiklik yapılmaz.
+// Her karar kim, ne zaman, hangi kanıtla bilgisiyle kayıt altına alınır.
+model ActionProposal {
+  id              String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId  String               @map("organization_id") @db.Uuid
+  insightId       String?              @map("insight_id") @db.Uuid
+  actionType      String               @map("action_type") @db.VarChar(40)
+  title           String               @db.VarChar(200)
+  description     String
+  evidence        Json                 @default("[]")
+  status          String               @default("proposed") @db.VarChar(20)
+  decidedBy       String?              @map("decided_by") @db.VarChar(160)
+  decidedAt       DateTime?            @map("decided_at") @db.Timestamptz(6)
+  decisionNote    String?              @map("decision_note")
+  executionResult Json?                @map("execution_result")
+  rollback        Json?
+  createdAt       DateTime             @default(now()) @map("created_at") @db.Timestamptz(6)
+  organization    CustomerOrganization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, status], map: "action_proposals_org_status_idx")
+  @@map("action_proposals")
+}
+
+// Ödeme linki: müşteriye gönderilen, tahmin edilemez ve süreli bağlantı. Belirteç yalnızca özetiyle saklanır.
+model PaymentLink {
+  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  paymentId    String    @map("payment_id") @db.Uuid
+  tokenHash    String    @unique @map("token_hash") @db.Char(64)
+  tokenHint    String    @map("token_hint") @db.VarChar(12)
+  createdBy    String?   @map("created_by") @db.VarChar(80)
+  expiresAt    DateTime  @map("expires_at") @db.Timestamptz(6)
+  revokedAt    DateTime? @map("revoked_at") @db.Timestamptz(6)
+  openCount    Int       @default(0) @map("open_count")
+  lastOpenedAt DateTime? @map("last_opened_at") @db.Timestamptz(6)
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  payment      Payment   @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+
+  @@index([paymentId], map: "payment_links_payment_idx")
+  @@map("payment_links")
+}
+
+// Ödeme sağlayıcısındaki her deneme. Sonuç tarayıcıdan değil, sağlayıcıdan sunucu tarafında sorgulanarak işlenir.
+model PaymentTransaction {
+  id                String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  paymentId         String    @map("payment_id") @db.Uuid
+  provider          String    @db.VarChar(20)
+  conversationId    String    @unique @map("conversation_id") @db.VarChar(64)
+  checkoutToken     String?   @unique @map("checkout_token") @db.VarChar(200)
+  status            String    @default("initialized") @db.VarChar(20)
+  source            String    @db.VarChar(20)
+  amount            Decimal   @db.Decimal(14, 2)
+  currency          String    @db.Char(3)
+  paidPrice         Decimal?  @map("paid_price") @db.Decimal(14, 2)
+  installment       Int?      @db.SmallInt
+  providerPaymentId String?   @map("provider_payment_id") @db.VarChar(80)
+  error             String?
+  createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime  @default(now()) @map("updated_at") @db.Timestamptz(6)
+  payment           Payment   @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+
+  @@index([paymentId, createdAt(sort: Desc)], map: "payment_transactions_payment_created_idx")
+  @@map("payment_transactions")
+}

@@ -1,3 +1,4 @@
+import { publicMessage } from "../../../infrastructure/http/http-hardening.js";
 import { isAuthed } from "../lib/auth.js";
 import { redis } from "../lib/redis.js";
 import { getSettings } from "../lib/events.js";
@@ -16,5 +17,5 @@ export default async function handler(req, res) {
       return res.status(200).json({ ...next, telegramConfigured: !!(process.env.TELEGRAM_BOT_TOKEN && process.env.TELEGRAM_CHAT_ID) });
     }
     res.status(405).end();
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { res.status(500).json({ error: publicMessage(e) }); }
 }

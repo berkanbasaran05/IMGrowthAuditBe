@@ -1,4 +1,6 @@
+import { publicMessage } from "../../../infrastructure/http/http-hardening.js";
 import { isAuthed } from "../lib/auth.js";
+import { safeFetch } from "../../audit/safe-fetch.js";
 import { getOne, put } from "../lib/redis.js";
 import { renderDemo, model, pagesOf, extras } from "../lib/demo-template.js";
 
@@ -34,7 +36,7 @@ export default async function handler(req, res) {
       }
       const imgs = [...(lead.demo.images || []), lead.demo.logo].filter(Boolean);
       const bad = [];
-      await Promise.all(imgs.map(async (u) => { try { const r = await fetch(u, { method: "GET", headers: { Range: "bytes=0-64" } }); if (!r.ok || !(r.headers.get("content-type") || "").startsWith("image/")) bad.push(u); } catch { bad.push(u); } }));
+      await Promise.all(imgs.map(async (u) => { try { const r = await safeFetch(u, { accept: "image/*", maxBytes: 65_536, timeoutMs: 10_000 }); if (r.status >= 400 || !(r.headers.get("content-type") || "").startsWith("image/")) bad.push(u); } catch { bad.push(u); } }));
       if (bad.length) issues.push(`${bad.length} görsel yüklenmiyor`);
       if (!lead.phone) issues.push("Telefon numarası yok (arama ve WhatsApp düğmeleri çalışmaz)");
       else if (String(lead.phone).split("/")[0].replace(/\D/g, "").length < 10) issues.push("Telefon numarası eksik görünüyor");
@@ -48,5 +50,5 @@ export default async function handler(req, res) {
       return res.status(200).json({ ok: true, qc });
     }
     res.status(400).json({ error: "Geçersiz işlem" });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { res.status(500).json({ error: publicMessage(e) }); }
 }

@@ -8,12 +8,15 @@ import { SCHEMA, cleanAnswers, missingRequired } from "../lib/adsform.js";
 async function track(req, res) {
   const b = typeof req.body === "string" ? JSON.parse(req.body || "{}") : (req.body || {});
   const id = String(b.lead || ""); if (!/^[a-z0-9-]{1,120}$/.test(id)) return res.status(204).end();
-  const ip = String(req.headers["x-forwarded-for"] || "").split(",")[0].trim() || "x";
+  const ip = String(req.ip || "x");
   const k = `rl:trk:${ip}`, n = await redis("INCR", k); if (n === 1) await redis("EXPIRE", k, 3600); if (n > 120) return res.status(204).end();
   const l = await getOne("leads", id); if (!l || !l.demo) return res.status(204).end();
-  const page = String(b.page || "ana-sayfa").slice(0, 80), secs = Math.max(0, Math.min(1800, +b.secs_time || 0)), depth = Math.max(0, Math.min(100, +b.depth || 0));
+  // Sayfa adı nesne anahtarı olarak kullanılır; prototip anahtarları (__proto__ vb.) reddedilir.
+  const page = String(b.page || "ana-sayfa").slice(0, 80).replace(/[^a-z0-9/_-]/gi, "");
+  if (!page || ["__proto__", "constructor", "prototype"].includes(page) || page in Object.prototype) return res.status(204).end();
+  const secs = Math.max(0, Math.min(1800, +b.secs_time || 0)), depth = Math.max(0, Math.min(100, +b.depth || 0));
   const I = l.interest || { pages: {}, secs: [], total: 0 };
-  const P = I.pages[page] || { v: 0, t: 0, d: 0 }; P.v++; P.t += secs; P.d = Math.max(P.d, depth); I.pages[page] = P;
+  const P = Object.hasOwn(I.pages, page) ? I.pages[page] : { v: 0, t: 0, d: 0 }; P.v++; P.t += secs; P.d = Math.max(P.d, depth); I.pages[page] = P;
   I.total = (I.total || 0) + secs;
   const newSecs = (Array.isArray(b.secs) ? b.secs : []).map((x) => String(x).slice(0, 30)).filter((x) => !I.secs.includes(x));
   I.secs = [...I.secs, ...newSecs].slice(0, 40);
@@ -66,7 +69,7 @@ async function adsForm(req, res) {
   res.setHeader("Cache-Control", "no-store");
   const k = String(req.query.k || "");
   if (!/^[a-f0-9]{32}$/.test(k)) return res.status(404).json({ error: "Bağlantı geçersiz" });
-  const ip = String(req.headers["x-forwarded-for"] || "").split(",")[0].trim() || "x";
+  const ip = String(req.ip || "x");
   const rk = `rl:adsf:${ip}`, n = await redis("INCR", rk); if (n === 1) await redis("EXPIRE", rk, 3600); if (n > 60) return res.status(429).json({ error: "Çok fazla deneme. Lütfen daha sonra tekrar deneyin." });
   const id = await redis("HGET", "adstokens", k); const c = id ? await getOne("adsclients", id) : null;
   if (!c) return res.status(404).json({ error: "Bağlantı geçersiz" });
@@ -99,7 +102,7 @@ export default async function handler(req, res) {
     if (req.method === "POST") {
       const b = req.body || {};
       if (b.website) return res.status(200).json({ ok: true }); // bot tuzağı
-      const ip = String(req.headers["x-forwarded-for"] || "").split(",")[0].trim() || "x";
+      const ip = String(req.ip || "x");
       const k = `rl:book:${ip}`, n = await redis("INCR", k);
       if (n === 1) await redis("EXPIRE", k, 3600);
       if (n > 8) return res.status(429).json({ error: "Çok fazla deneme. Lütfen daha sonra tekrar deneyin." });
@@ -122,5 +125,5 @@ export default async function handler(req, res) {
       return res.status(200).json({ ok: true });
     }
     res.status(405).end();
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { console.error(JSON.stringify({ t: new Date().toISOString(), level: "error", msg: "public_api", error: e.message })); res.status(500).json({ error: "İşlem tamamlanamadı. Lütfen daha sonra tekrar deneyin." }); }
 }

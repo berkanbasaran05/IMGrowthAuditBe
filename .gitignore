@@ -4,3 +4,8 @@ dist/
 .env.local
 *.log
 .DS_Store
+.postgres/
+src/generated/prisma/
+.postgres-init-password
+.test-build/
+.prod-build/

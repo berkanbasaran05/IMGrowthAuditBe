@@ -6,20 +6,45 @@
     "dev": "nest start --watch",
     "build": "nest build",
     "start": "node dist/main.js",
-    "push:leads": "node scripts/push.mjs"
+    "push:leads": "node scripts/push.mjs",
+    "db:start": "node scripts/database.mjs start",
+    "db:stop": "node scripts/database.mjs stop",
+    "db:status": "node scripts/database.mjs status",
+    "db:migrate": "prisma migrate deploy",
+    "db:legacy:migrate": "node scripts/migrate.mjs",
+    "prisma:generate": "prisma generate",
+    "prisma:validate": "prisma validate",
+    "prisma:migrate": "prisma migrate dev",
+    "prisma:deploy": "prisma migrate deploy",
+    "prisma:studio": "prisma studio",
+    "typecheck": "tsc --noEmit -p tsconfig.build.json",
+    "test": "rm -rf .test-build && tsc -p tsconfig.build.json --outDir .test-build && node --env-file-if-exists=.env --test test/*.test.mjs"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "0.129.0",
+    "@expo-google-fonts/plus-jakarta-sans": "0.4.2",
     "@nestjs/common": "^11.1.6",
     "@nestjs/core": "^11.1.6",
     "@nestjs/platform-express": "^11.1.6",
+    "@prisma/adapter-pg": "^7.10.0",
+    "@prisma/client": "^7.10.0",
+    "cheerio": "1.2.0",
+    "dotenv": "^18.0.7",
+    "iyzipay": "2.0.70",
     "nodemailer": "^6.10.1",
+    "pdfkit": "0.20.2",
+    "pg": "^8.23.1",
     "reflect-metadata": "^0.2.2",
-    "rxjs": "^7.8.2"
+    "rxjs": "^7.8.2",
+    "zod": "4.6.5"
   },
   "devDependencies": {
     "@nestjs/cli": "^11.0.10",
     "@types/express": "^5.0.3",
     "@types/node": "^22.18.6",
+    "@types/pdfkit": "0.17.6",
+    "@types/pg": "^8.23.1",
+    "prisma": "^7.10.0",
     "typescript": "^5.9.2"
   }
 }

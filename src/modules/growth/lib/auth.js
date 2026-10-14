@@ -4,7 +4,9 @@ const SECRET = process.env.SESSION_SECRET || "";
 const COOKIE = "im_session";
 const MAX_AGE = 60 * 60 * 24 * 7; // 7 gün
 
-const sign = (v) => crypto.createHmac("sha256", SECRET).update(v).digest("base64url");
+// İmza anahtarı yönetici parolasına bağlıdır: ADMIN_PASSWORD değişince tüm eski oturumlar geçersiz olur.
+const sessionKey = () => crypto.createHmac("sha256", SECRET).update("admin-session:" + crypto.createHash("sha256").update(process.env.ADMIN_PASSWORD || "").digest("hex")).digest();
+const sign = (v) => crypto.createHmac("sha256", sessionKey()).update(v).digest("base64url");
 
 export function safeEqual(a, b) {
   const x = Buffer.from(String(a)), y = Buffer.from(String(b));
@@ -36,6 +38,14 @@ export function isAuthed(req) {
   if (!payload || !sig || !safeEqual(sig, sign(payload))) return false;
   try { return JSON.parse(Buffer.from(payload, "base64url").toString()).exp > Date.now() / 1000; }
   catch { return false; }
+}
+
+// Geçerli oturumun kullanıcı adı (denetim kayıtlarında "kim yaptı" bilgisi için); oturum yoksa null.
+export function sessionUser(req) {
+  if (!isAuthed(req)) return null;
+  const raw = (req.headers.cookie || "").split(/;\s*/).find((c) => c.startsWith(COOKIE + "="));
+  try { return JSON.parse(Buffer.from(raw.slice(COOKIE.length + 1).split(".")[0], "base64url").toString()).u ?? null; }
+  catch { return null; }
 }
 
 // Günlük keşif görevi için makine erişimi: Authorization: Bearer <INGEST_TOKEN>

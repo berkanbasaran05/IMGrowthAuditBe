@@ -1,3 +1,4 @@
+import { publicMessage } from "../../../infrastructure/http/http-hardening.js";
 import crypto from "node:crypto";
 import { isAuthed } from "../lib/auth.js";
 import { redis, getAll, getOne, put, merge } from "../lib/redis.js";
@@ -29,5 +30,5 @@ export default async function handler(req, res) {
     }
     if (req.method === "DELETE") { await redis("HDEL", "refs", String(req.query.id || "")); return res.status(200).json({ ok: true }); }
     res.status(405).end();
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { res.status(500).json({ error: publicMessage(e) }); }
 }

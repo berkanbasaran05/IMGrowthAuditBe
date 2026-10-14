@@ -1,0 +1,38 @@
+# Tek sunucuda tam kurulum: PostgreSQL + migration + backend + frontend.
+# Kullanım (IMGrowthAuditBe klasöründen): docker compose -f deploy/docker-compose.yml --env-file .env up -d --build
+# Önünde TLS sonlandıran ve X-Forwarded-For'a istemci IP'sini ekleyen bir ters vekil (Caddy/Nginx/Cloudflare) ŞARTTIR.
+# Next.js bu başlığa kendi kaydını eklemez; bu yüzden TRUST_PROXY_HOPS=1 doğrudur.
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: im_growth_audit
+      POSTGRES_USER: im_growth_audit
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD gerekli}
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck: { test: ["CMD-SHELL", "pg_isready -U im_growth_audit"], interval: 5s, retries: 20 }
+
+  migrate:
+    build: { context: .., target: migrate }
+    environment: { DATABASE_URL: "postgresql://im_growth_audit:${POSTGRES_PASSWORD}@db:5432/im_growth_audit" }
+    depends_on: { db: { condition: service_healthy } }
+
+  backend:
+    build: { context: .., target: runtime }
+    restart: unless-stopped
+    env_file: ../.env
+    environment:
+      DATABASE_URL: "postgresql://im_growth_audit:${POSTGRES_PASSWORD}@db:5432/im_growth_audit"
+      NODE_ENV: production
+      BACKEND_HOST: 0.0.0.0
+    depends_on: { migrate: { condition: service_completed_successfully } }
+
+  frontend:
+    build: { context: ../../IMGrowthAuditFe, args: { BACKEND_URL: "http://backend:3001" } }
+    restart: unless-stopped
+    ports: ["127.0.0.1:3000:3000"]
+    depends_on: [backend]
+
+volumes:
+  pgdata:

@@ -1,3 +1,4 @@
+import { publicMessage } from "../../../infrastructure/http/http-hardening.js";
 import { isAuthed, isMachine } from "../lib/auth.js";
 import { getAll, getOne, put, merge, redis } from "../lib/redis.js";
 import { addEvent } from "../lib/events.js";
@@ -16,6 +17,8 @@ export default async function handler(req, res) {
       return res.status(200).json({ leads, runs: runs.slice(0, 30) });
     }
     if (req.method === "PATCH") {
+      // Makine belirteci (INGEST_TOKEN) yalnızca toplu keşif aktarımı içindir; tekil kayıt düzenleyemez.
+      if (!human) return res.status(403).json({ error: "Bu işlem için panel oturumu gerekir" });
       const { id, patch } = req.body || {};
       if (!ID.test(id || "") || !patch || typeof patch !== "object") return res.status(400).json({ error: "Geçersiz istek" });
       const cur = await getOne("leads", id);
@@ -70,7 +73,12 @@ export default async function handler(req, res) {
         const { id, ...data } = l;
         if (!ID.test(id || "")) continue;
         const cur = await getOne("leads", id);
-        if (cur) { await put("leads", id, { ...data, ...pick(cur, ["status", "statusAt", "notes", "seq", "undo"]) }); updated++; }
+        // Var olan kayıtta ekibin yönettiği alanlar korunur (aşama, notlar, gönderim dizisi, arama listesi, yetkili, demo, düzenlenmiş metin).
+        if (cur) {
+          const keep = pick(cur, HUMAN_FIELDS);
+          if (cur.outreach?.edited) keep.outreach = cur.outreach;
+          await put("leads", id, { ...data, ...keep }); updated++;
+        }
         else { await put("leads", id, { status: "yeni", ...data }); added++; }
       }
       if (run?.date) await put("runs", String(run.date), run);
@@ -78,10 +86,12 @@ export default async function handler(req, res) {
     }
     res.status(405).end();
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    res.status(500).json({ error: publicMessage(e) });
   }
 }
 
+const HUMAN_FIELDS = ["status", "statusAt", "notes", "seq", "undo", "optOut", "works", "work", "workAt", "callList", "callAt", "callDay", "callLog", "callNote", "callDoneAt",
+  "contactName", "contactTitle", "contactLine", "contactSource", "contactConf", "demo", "bookingId", "interest", "heat", "manual"];
 const pick = (o, keys) => Object.fromEntries(keys.filter((k) => o[k] !== undefined).map((k) => [k, o[k]]));
 
 const INFO = ["name", "sector", "city", "district", "website", "websiteStatus", "ads", "services", "phone", "email", "instagram", "capacity"];

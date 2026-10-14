@@ -21,7 +21,7 @@ export default async function handler(req, res) {
     return res.status(200).json({ ...cfg, sentToday, sends });
   }
   if (req.method !== "POST") return res.status(405).end();
-  if (!cfg.configured) return res.status(400).json({ error: "Mail hesabı bağlı değil. Vercel'de SMTP ayarlarını ekleyin." });
+  if (!cfg.configured) return res.status(400).json({ error: "Mail hesabı bağlı değil. Sunucuda SMTP ayarlarını (SMTP_HOST, SMTP_USER, SMTP_PASS) tanımlayın." });
 
   const { id, step, test } = req.body || {};
 
