@@ -30,6 +30,12 @@ model Customer {
   adBudget    Decimal?   @map("ad_budget") @db.Decimal(14, 2)
   billingDay  Int?       @map("billing_day") @db.SmallInt
   nextPaymentDate DateTime? @map("next_payment_date") @db.Date
+  services    Json       @default("[]")
+  packageName String?    @map("package_name") @db.VarChar(120)
+  siteFee     Decimal?   @map("site_fee") @db.Decimal(14, 2)
+  adServiceFee Decimal?  @map("ad_service_fee") @db.Decimal(14, 2)
+  dailyAdBudget Decimal? @map("daily_ad_budget") @db.Decimal(14, 2)
+  logo        String?
   createdAt   DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt   DateTime   @default(now()) @map("updated_at") @db.Timestamptz(6)
   contracts   Contract[]

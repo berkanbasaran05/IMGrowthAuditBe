@@ -10,7 +10,8 @@ const allowed = (value: unknown, values: string[], fallback: string) => values.i
 const CUSTOMER_FIELDS = `id::text, lead_id AS "leadId", name, contact_name AS "contactName", email, phone, sector, owner_name AS owner,
   status, notes, website, address, tax_office AS "taxOffice", tax_no AS "taxNo", social, contacts, accounts,
   service_start AS "serviceStart", ad_start AS "adStart", ad_budget::float8 AS "adBudget", billing_day AS "billingDay",
-  next_payment_date AS "nextPaymentDate", created_at AS "createdAt", updated_at AS "updatedAt"`;
+  next_payment_date AS "nextPaymentDate", services, package_name AS "packageName", site_fee::float8 AS "siteFee",
+  ad_service_fee::float8 AS "adServiceFee", daily_ad_budget::float8 AS "dailyAdBudget", logo, created_at AS "createdAt", updated_at AS "updatedAt"`;
 const CONTRACT_FIELDS = `id::text, customer_id::text AS "customerId", title, services, value::float8, monthly_value::float8 AS "monthlyValue",
   currency, billing, status, start_date AS "startDate", end_date AS "endDate", signed_at AS "signedAt", document_url AS "documentUrl", notes,
   created_at AS "createdAt", updated_at AS "updatedAt"`;
@@ -25,6 +26,9 @@ const social = (value: any) => Object.fromEntries(SOCIAL.map((key) => [key, text
 const list = (value: any, keys: string[], max = 20) => (Array.isArray(value) ? value : []).slice(0, max)
   .map((row: any) => Object.fromEntries(keys.map((key) => [key, text(row?.[key], key === "note" ? 500 : 200)])))
   .filter((row: any) => Object.values(row).some(Boolean));
+const logo = (value: unknown) => /^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(String(value || "")) && String(value).length <= 200000 ? String(value) : null;
+const svc = (value: any) => (Array.isArray(value) ? value : []).map((x: any) => text(x, 80)).filter(Boolean).slice(0, 20);
+const optMoney = (value: unknown) => value === "" || value == null ? null : money(value);
 const day = (value: unknown) => { const n = Math.floor(Number(value)); return n >= 1 && n <= 31 ? n : null; };
 
 @Injectable()
@@ -61,15 +65,17 @@ export class CrmService {
     if (!name) throw new Error("Müşteri adı gerekli");
     const result = await this.database.query(`INSERT INTO customers
       (name, contact_name, email, phone, status, owner_name, sector, lead_id, notes,
-       website, address, tax_office, tax_no, social, contacts, accounts, service_start, ad_start, ad_budget, billing_day, next_payment_date)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14::jsonb,$15::jsonb,$16::jsonb,$17,$18,$19,$20,$21) RETURNING ${CUSTOMER_FIELDS}`,
+       website, address, tax_office, tax_no, social, contacts, accounts, service_start, ad_start, ad_budget, billing_day, next_payment_date,
+       services, package_name, site_fee, ad_service_fee, daily_ad_budget, logo)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14::jsonb,$15::jsonb,$16::jsonb,$17,$18,$19,$20,$21,$22::jsonb,$23,$24,$25,$26,$27) RETURNING ${CUSTOMER_FIELDS}`,
       [name, text(input.contactName, 100) || null, text(input.email, 120).toLowerCase() || null, text(input.phone, 40) || null,
        allowed(input.status, ["onboarding", "active", "paused", "completed", "lost"], "onboarding"), text(input.owner, 80) || null,
        text(input.sector, 100) || null, text(input.leadId, 120) || null, text(input.notes, 2000) || null,
        text(input.website, 200) || null, text(input.address, 500) || null, text(input.taxOffice, 100) || null, text(input.taxNo, 40) || null,
        JSON.stringify(social(input.social)), JSON.stringify(list(input.contacts, ["label", "name", "email", "phone"])),
        JSON.stringify(list(input.accounts, ["platform", "username", "password", "note"])),
-       date(input.serviceStart), date(input.adStart), input.adBudget ? money(input.adBudget) : null, day(input.billingDay), date(input.nextPaymentDate)]);
+       date(input.serviceStart), date(input.adStart), input.adBudget ? money(input.adBudget) : null, day(input.billingDay), date(input.nextPaymentDate),
+       JSON.stringify(svc(input.services)), text(input.packageName, 120) || null, optMoney(input.siteFee), optMoney(input.adServiceFee), optMoney(input.dailyAdBudget), logo(input.logo)]);
     await this.createActivity({ customerId: result.rows[0].id, type: "customer_created", summary: "Müşteri kaydı oluşturuldu" });
     return result.rows[0];
   }
@@ -80,7 +86,8 @@ export class CrmService {
     const str = (key: string, max: number, cur: any, lower = false) => has(key) ? (lower ? text(patch[key], max).toLowerCase() : text(patch[key], max)) || null : cur;
     const result = await this.database.query(`UPDATE customers SET name=$2, contact_name=$3, email=$4, phone=$5, owner_name=$6,
       sector=$7, notes=$8, status=$9, website=$10, address=$11, tax_office=$12, tax_no=$13, social=$14::jsonb, contacts=$15::jsonb,
-      accounts=$16::jsonb, service_start=$17, ad_start=$18, ad_budget=$19, billing_day=$20, next_payment_date=$21, updated_at=now()
+      accounts=$16::jsonb, service_start=$17, ad_start=$18, ad_budget=$19, billing_day=$20, next_payment_date=$21,
+      services=$22::jsonb, package_name=$23, site_fee=$24, ad_service_fee=$25, daily_ad_budget=$26, logo=$27, updated_at=now()
       WHERE id=$1 RETURNING ${CUSTOMER_FIELDS}`,
       [customerId, has("name") ? text(patch.name, 120) || c.name : c.name, str("contactName", 100, c.contactName), str("email", 120, c.email, true),
        str("phone", 40, c.phone), str("owner", 80, c.owner), str("sector", 100, c.sector), has("notes") ? text(patch.notes, 2000) || null : c.notes,
@@ -90,7 +97,10 @@ export class CrmService {
        JSON.stringify(has("accounts") ? list(patch.accounts, ["platform", "username", "password", "note"]) : c.accounts),
        has("serviceStart") ? date(patch.serviceStart) : c.serviceStart, has("adStart") ? date(patch.adStart) : c.adStart,
        has("adBudget") ? (patch.adBudget ? money(patch.adBudget) : null) : c.adBudget, has("billingDay") ? day(patch.billingDay) : c.billingDay,
-       has("nextPaymentDate") ? date(patch.nextPaymentDate) : c.nextPaymentDate]);
+       has("nextPaymentDate") ? date(patch.nextPaymentDate) : c.nextPaymentDate,
+       JSON.stringify(has("services") ? svc(patch.services) : c.services), str("packageName", 120, c.packageName),
+       has("siteFee") ? optMoney(patch.siteFee) : c.siteFee, has("adServiceFee") ? optMoney(patch.adServiceFee) : c.adServiceFee,
+       has("dailyAdBudget") ? optMoney(patch.dailyAdBudget) : c.dailyAdBudget, has("logo") ? logo(patch.logo) : c.logo]);
     return result.rows[0];
   }
 
