@@ -99,7 +99,7 @@ export function renderReportPdf(r: PublicReport): Promise<Buffer> {
   doc.roundedRect(L, cy0, W, 96, 10).fill(C.ink);
   doc.font("B").fontSize(14).fillColor("#ffffff").text("Bu sorunları birlikte çözelim", L + 18, cy0 + 16, { width: W - 36 });
   doc.font("R").fontSize(9.5).fillColor("#c9cdd4").text("Raporu 15 dakikalık ücretsiz bir görüşmede sizinle birlikte gözden geçirelim.", L + 18, cy0 + 38, { width: W - 36 });
-  doc.font("S").fontSize(10).fillColor("#ffffff").text(`WhatsApp / Telefon: ${CONTACT.phoneDisplay}   ·   ${CONTACT.email}   ·   istanbul.marketing`, L + 18, cy0 + 64, { width: W - 36, link: `https://wa.me/${CONTACT.whatsapp}` });
+  doc.font("S").fontSize(10).fillColor("#ffffff").text(`WhatsApp / Telefon: ${CONTACT.phoneDisplay}   ·   istanbul.marketing`, L + 18, cy0 + 64, { width: W - 36, link: `https://wa.me/${CONTACT.whatsapp}` });
   doc.y = cy0 + 106;
 
   h2("Teknik detaylar");

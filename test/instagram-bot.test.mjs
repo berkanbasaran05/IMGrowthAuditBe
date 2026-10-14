@@ -313,12 +313,12 @@ describe("Servis akışı", () => {
 });
 
 describe("Skor kartı görseli", () => {
-  it("1200x628 PNG üretir, yazı tipi gömülü", async () => {
+  it("1080x1080 PNG üretir, yazı tipi gömülü", async () => {
     const { renderCardPng, renderCardSvg } = await load("sales/report.card");
     const input = { domain: "ornek.com", score: 71, categories: [{ name: "Güven", score: 40 }, { name: "Google'da bulunma", score: null }] };
     assert.match(renderCardSvg({ ...input, domain: "<x>" }), /&lt;x&gt;/);
     const png = await renderCardPng(input);
     assert.equal(png.subarray(1, 4).toString(), "PNG");
-    assert.deepEqual([png.readUInt32BE(16), png.readUInt32BE(20)], [1200, 628]);
+    assert.deepEqual([png.readUInt32BE(16), png.readUInt32BE(20)], [1080, 1080]);
   });
 });

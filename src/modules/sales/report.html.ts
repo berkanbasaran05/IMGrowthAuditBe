@@ -88,7 +88,7 @@ ${r.roadmap.some((p) => p.items.length) ? `<h2>Adım adım plan</h2><div class="
 ${r.strengths.length ? `<h2>İyi giden şeyler</h2><div class="card"><ul class="obs" style="margin:0">${r.strengths.map((s) => `<li><b>${esc(s.name)}</b></li>`).join("")}</ul></div>` : ""}
 
 <div class="card cta"><h2>Sonraki adım</h2><b>Bu sorunları birlikte çözelim</b><p>Raporu 15 dakikalık ücretsiz bir görüşmede sizinle birlikte gözden geçirelim; hangi işin önce yapılması gerektiğini netleştirelim.</p>
-<div class="acts"><a class="wa" href="https://wa.me/${esc(CONTACT.whatsapp)}" rel="noopener noreferrer" target="_blank">WhatsApp'tan yazın</a><a href="tel:${esc(CONTACT.phone)}">Arayın: ${esc(CONTACT.phoneDisplay)}</a><a href="mailto:${esc(CONTACT.email)}">${esc(CONTACT.email)}</a></div></div>
+<div class="acts"><a class="wa" href="https://wa.me/${esc(CONTACT.whatsapp)}" rel="noopener noreferrer" target="_blank">WhatsApp'tan yazın</a><a href="tel:${esc(CONTACT.phone)}">Arayın: ${esc(CONTACT.phoneDisplay)}</a></div></div>
 
 <details class="tech"><summary>Teknik detaylar</summary><div class="card">
 <div class="kv"><div><span>Analiz tarihi</span><b>${esc(trDate(r.auditDate))}</b></div><div><span>Veri kapsamı</span><b>${pct(r.coverage)}</b></div><div><span>Güven düzeyi</span><b>${pct(r.confidence)}</b></div><div><span>Puanlama sürümü</span><b>${esc(r.scoringVersion)}</b></div></div>
