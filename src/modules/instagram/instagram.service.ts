@@ -1,3 +1,4 @@
+import { DEFAULT_BACKEND_BASE } from "../sales/report.public.js";
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from "@nestjs/common";
 import { PrismaService } from "../../infrastructure/prisma/prisma.service.js";
 import { getOne, put } from "../growth/lib/redis.js";
@@ -16,7 +17,7 @@ const REFRESH_EVERY_MS = 7 * 86_400_000;
 const AUDIT_GIVEUP_MS = 20 * 60_000;
 const SENDING_STALE_MS = 5 * 60_000;
 const TOKEN_KEY = "ig:access_token";
-const DEFAULT_BASE = "https://customer.istanbul.marketing";
+const DEFAULT_BASE = DEFAULT_BACKEND_BASE;
 
 export const reportBase = () => (process.env.PUBLIC_REPORT_BASE_URL || DEFAULT_BASE).replace(/\/$/, "");
 
@@ -188,7 +189,7 @@ export class InstagramService implements OnModuleInit, OnModuleDestroy {
       const r = out.result;
       score = r.overallScore;
       const steps = r.topOpportunities.map((o: any) => o.title);
-      card = resultCard({ domain, score, grade: r.grade, steps, reportUrl: r.reportUrl });
+      card = resultCard({ domain, score, grade: r.grade, steps, reportUrl: r.reportUrl, cardUrl: r.cardUrl });
       const st = stepsText(steps);
       texts = [st || "Detaylı rapordaki önerileri ekibimizle birlikte değerlendirebilirsiniz."];
       quick = RESULT_QUICK; next = "result_sent";

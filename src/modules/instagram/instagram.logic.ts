@@ -174,7 +174,7 @@ export function splitMessage(text: string, max = MAX_TEXT_BYTES): string[] {
   return out;
 }
 
-export interface ResultInput { domain: string; score: number | null; grade: string; steps: string[]; reportUrl: string }
+export interface ResultInput { domain: string; score: number | null; grade: string; steps: string[]; reportUrl: string; cardUrl?: string }
 const cut = (v: string, n: number) => (v.length > n ? v.slice(0, n - 1).trimEnd() + "…" : v);
 
 // Sonuç kartı (generic template): görsel = skor kartı, butonlar = rapor + ücretsiz görüşme. Metinde URL yoktur.
@@ -186,7 +186,7 @@ export function resultCard(r: ResultInput) {
     { type: "postback", title: "Ücretsiz görüşme", payload: PAYLOAD.talk },
   ];
   return {
-    generic: { attachment: { type: "template", payload: { template_type: "generic", elements: [{ title, subtitle, image_url: `${r.reportUrl}/card.png`, default_action: { type: "web_url", url: r.reportUrl }, buttons }] } } },
+    generic: { attachment: { type: "template", payload: { template_type: "generic", elements: [{ title, subtitle, image_url: r.cardUrl || `${r.reportUrl}/card.png`, default_action: { type: "web_url", url: r.reportUrl }, buttons }] } } },
     button: { attachment: { type: "template", payload: { template_type: "button", text: cut(`${title}\n${subtitle}`, 640), buttons } } },
     text: `${title}\n${subtitle}`,
   };

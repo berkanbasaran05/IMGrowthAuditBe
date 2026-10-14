@@ -165,3 +165,70 @@ describe("Fırsat durumu", () => {
     assert.equal(calls[0].data.status, "done");
   });
 });
+
+const pub = await load("sales/report.public");
+const igLogic = await load("instagram/instagram.logic");
+describe("Site rapor sayfası JSON ucu", () => {
+  const token = "B".repeat(43);
+  const fakeRes = () => ({ code: 0, headers: {}, body: null, loc: null,
+    status(c) { this.code = c; return this; }, set(k, v) { if (typeof k === "string") this.headers[k] = v; else Object.assign(this.headers, k); return this; },
+    json(b) { this.body = b; return this; }, end() { return this; }, redirect(c, l) { this.code = c; this.loc = l; return this; } });
+  const req = (ip, origin) => ({ headers: { host: "api.example", ...(origin ? { origin } : {}) }, protocol: "https", ip, socket: { remoteAddress: ip } });
+  const fullReport = reportModel.buildReport(audit({ summary: { headline: "Siteniz iyi başlıyor.", narrative: "Bir. İki. Üç. Dört." } }), lead);
+  const svcWith = (link) => { const s = new salesSvc.SalesService({ auditReport: { findUnique: async () => link, update: async () => { s.views++; return link; } } }, {}); s.views = 0; s.reportFor = async () => fullReport; return s; };
+  const live = { id: "1", auditId: "a", revokedAt: null, expiresAt: new Date(Date.now() + 60_000) };
+
+  it("yalnızca müşteriye uygun alanları döner, görüntülenmeyi sayar", async () => {
+    const prev = process.env.PUBLIC_REPORT_BASE_URL; delete process.env.PUBLIC_REPORT_BASE_URL;
+    process.env.PUBLIC_AUDIT_ORIGINS = "https://www.istanbul.marketing";
+    const s = svcWith(live); const res = fakeRes();
+    await new salesCtrl.PublicReportApiController(s).json(token, req(`j-${Date.now()}`, "https://www.istanbul.marketing"), res);
+    if (prev) process.env.PUBLIC_REPORT_BASE_URL = prev;
+    assert.equal(res.code, 200); assert.equal(s.views, 1);
+    assert.equal(res.headers["Cache-Control"], "private, max-age=60");
+    assert.equal(res.headers["Access-Control-Allow-Origin"], "https://www.istanbul.marketing");
+    assert.match(res.headers["X-Robots-Tag"], /noindex/);
+    const b = res.body;
+    assert.deepEqual(Object.keys(b).sort(), ["auditDate", "cardUrl", "categories", "companyName", "domain", "gradeText", "grade", "limitations", "pdfUrl", "priorities", "recommendedServices", "roadmap", "score", "strengths", "summary"].sort());
+    assert.equal(b.domain, "ornek.com"); assert.equal(b.score, 62); assert.equal(b.grade, "Geliştirilebilir");
+    assert.equal(b.summary, "Siteniz iyi başlıyor. Bir. İki.");
+    assert.deepEqual(b.categories.map((c) => [c.key, c.status]), [["search", "urgent"], ["trust", "urgent"]]);
+    assert.ok(b.priorities.length <= 5 && b.priorities[0].impact === "high" && b.priorities[0].effort === "easy" && b.priorities[0].service === "SEO");
+    assert.deepEqual(b.roadmap.d30, ["Google'a sitenizi tanıtan dosyalar eksik"]);
+    assert.ok(b.recommendedServices.some((x) => x.key === "seo"));
+    assert.equal(b.pdfUrl, `https://api.example/r/${token}/pdf`); assert.equal(b.cardUrl, `https://api.example/r/${token}/card.png`);
+    const json = JSON.stringify(b);
+    for (const secret of ["GİZLİ SATIŞ NOTU", "sekreter sert", "İÇ NOT", "Ayşe", "88", "info@ornek.com", "priorityScore", "scoringVersion"]) assert.ok(!json.includes(secret), secret);
+  });
+  it("geçersiz, süresi dolmuş ve iptal edilmiş belirteçte aynı 404", async () => {
+    const bodies = [];
+    for (const [link, t] of [[null, token], [{ ...live, expiresAt: new Date(Date.now() - 1) }, token], [{ ...live, revokedAt: new Date() }, token], [live, "../x"]]) {
+      const res = fakeRes();
+      await new salesCtrl.PublicReportApiController(svcWith(link)).json(t, req(`n-${Math.random()}`), res);
+      assert.equal(res.code, 404); bodies.push(JSON.stringify(res.body));
+    }
+    assert.equal(new Set(bodies).size, 1);
+  });
+  it("URL üreticileri ortam değişkenine göre", () => {
+    delete process.env.PUBLIC_SITE_REPORT_BASE;
+    assert.equal(pub.reportLink("tok", "https://customer.istanbul.marketing/"), "https://customer.istanbul.marketing/r/tok");
+    process.env.PUBLIC_SITE_REPORT_BASE = "https://www.istanbul.marketing/analiz/rapor/";
+    assert.equal(pub.reportLink("tok", "https://customer.istanbul.marketing"), "https://www.istanbul.marketing/analiz/rapor/tok");
+    assert.deepEqual(pub.reportAssets("tok", "https://customer.istanbul.marketing"), { pdfUrl: "https://customer.istanbul.marketing/r/tok/pdf", cardUrl: "https://customer.istanbul.marketing/r/tok/card.png" });
+    delete process.env.PUBLIC_SITE_REPORT_BASE;
+  });
+  it("/r/:token env varsa siteye 302 yönlendirir, yoksa HTML", async () => {
+    process.env.PUBLIC_SITE_REPORT_BASE = "https://www.istanbul.marketing/analiz/rapor";
+    const res = fakeRes(); const s = svcWith(live);
+    await new salesCtrl.PublicReportController(s).html(token, req(`r-${Date.now()}`), res);
+    delete process.env.PUBLIC_SITE_REPORT_BASE;
+    assert.equal(res.code, 302); assert.equal(res.loc, `https://www.istanbul.marketing/analiz/rapor/${token}`); assert.equal(s.views, 0);
+  });
+  it("Instagram kart görseli site bağlantısından bağımsız backend adresidir", async () => {
+    const L = igLogic;
+    const c = L.resultCard({ domain: "a.com", score: 50, grade: "x", steps: [], reportUrl: "https://www.istanbul.marketing/analiz/rapor/tok", cardUrl: "https://customer.istanbul.marketing/r/tok/card.png" });
+    const el = c.generic.attachment.payload.elements[0];
+    assert.equal(el.image_url, "https://customer.istanbul.marketing/r/tok/card.png");
+    assert.equal(el.default_action.url, "https://www.istanbul.marketing/analiz/rapor/tok");
+  });
+});

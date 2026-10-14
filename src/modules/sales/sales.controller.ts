@@ -1,5 +1,7 @@
 import { cardInputFromReport, renderCardPng } from "./report.card.js";
-import { Body, Controller, Get, Param, Patch, Post, Req, Res } from "@nestjs/common";
+import { Body, Controller, Get, Options, Param, Patch, Post, Req, Res } from "@nestjs/common";
+import { applyCors } from "../audit/public-audit.controller.js";
+import { reportAssets, reportLink, toCustomerReport } from "./report.public.js";
 import type { Request, Response } from "express";
 import { publicMessage } from "../../infrastructure/http/http-hardening.js";
 import { AuditNotFoundError } from "../audit/audit.service.js";
@@ -46,7 +48,7 @@ export class SalesController {
     if (!UUID.test(id)) return res.status(404).json({ error: "Denetim bulunamadı" });
     return run(req, res, async () => {
       const link = await this.sales.createLink(id, Number(body?.days || 30), sessionUser(req));
-      return { id: link.id, expiresAt: link.expiresAt, url: `${publicBase(req)}/r/${link.token}` };
+      return { id: link.id, expiresAt: link.expiresAt, url: reportLink(link.token, publicBase(req)) };
     });
   }
 
@@ -111,6 +113,28 @@ export class SalesController {
 
 const NOT_FOUND = `<!doctype html><html lang="tr"><meta charset="utf-8"><meta name="robots" content="noindex"><title>Rapor bulunamadı</title><body style="font-family:system-ui;padding:40px;color:#07111f"><h1 style="font-size:22px">Rapor bulunamadı</h1><p>Bağlantı geçersiz, süresi dolmuş veya iptal edilmiş olabilir. Güncel rapor için Istanbul Marketing ile iletişime geçin.</p></body></html>`;
 
+const TOKEN_SHAPE = /^[A-Za-z0-9_-]{40,64}$/; // sales.service TOKEN ile aynı
+
+// Pazarlama sitesindeki rapor sayfasının veri ucu. /r/:token ile aynı belirteç doğrulaması, süre/iptal,
+// görüntülenme sayımı, hız sınırı ve noindex; CORS yalnızca PUBLIC_AUDIT_ORIGINS.
+@Controller("api/public/report")
+export class PublicReportApiController {
+  constructor(private readonly sales: SalesService) {}
+
+  @Options(":token")
+  preflight(@Req() req: Request, @Res() res: Response) { applyCors(req, res); return res.status(204).end(); }
+
+  @Get(":token")
+  async json(@Param("token") token: string, @Req() req: Request, @Res() res: Response) {
+    applyCors(req, res);
+    res.set({ "X-Robots-Tag": "noindex, nofollow", "Referrer-Policy": "no-referrer", "X-Content-Type-Options": "nosniff" });
+    if (rateLimited(clientIp(req))) return res.status(429).json({ error: "Çok fazla istek", code: "rate_limited" });
+    const report = await this.sales.resolve(token, true).catch(() => null);
+    if (!report) return res.status(404).set("Cache-Control", "no-store").json({ error: "Rapor bulunamadı", code: "not_found" });
+    return res.status(200).set("Cache-Control", "private, max-age=60").json(toCustomerReport(report, reportAssets(token, publicBase(req))));
+  }
+}
+
 // Müşteriye açık rapor (oturum gerekmez; erişim yalnızca tahmin edilemez belirteçle).
 @Controller("r")
 export class PublicReportController {
@@ -119,6 +143,9 @@ export class PublicReportController {
   @Get(":token")
   async html(@Param("token") token: string, @Req() req: Request, @Res() res: Response) {
     if (rateLimited(clientIp(req))) return res.status(429).set(SECURITY_HEADERS).send("Çok fazla istek");
+    // Müşteri sayfası pazarlama sitesindeyse oraya yönlendir (görüntülenme orada JSON ucu üzerinden sayılır).
+    const site = process.env.PUBLIC_SITE_REPORT_BASE?.trim();
+    if (site && TOKEN_SHAPE.test(token)) return res.set({ ...SECURITY_HEADERS, "Cache-Control": "private, no-store" }).redirect(302, reportLink(token, publicBase(req)));
     const report = await this.sales.resolve(token, true).catch(() => null);
     if (!report) return res.status(404).set(SECURITY_HEADERS).type("html").send(NOT_FOUND);
     res.set({ ...SECURITY_HEADERS, "Cache-Control": "private, no-store" }).type("html").send(renderReportHtml(report, { pdfHref: `/r/${token}/pdf` }));

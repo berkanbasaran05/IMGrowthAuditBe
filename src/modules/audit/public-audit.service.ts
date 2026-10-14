@@ -1,4 +1,5 @@
 import { Injectable } from "@nestjs/common";
+import { reportAssets, reportLink } from "../sales/report.public.js";
 import crypto from "node:crypto";
 import { PrismaService } from "../../infrastructure/prisma/prisma.service.js";
 import { addEvent } from "../growth/lib/events.js";
@@ -193,7 +194,8 @@ export class PublicAuditService {
           const p = locale === "tr" ? opportunityPlain(o) : { title: o.title, why: o.problem };
           return { title: p.title, why: p.why, recommendedService: o.service };
         }),
-        reportUrl: `${baseUrl}/r/${reportToken}`,
+        reportUrl: reportLink(reportToken, baseUrl),
+        ...reportAssets(reportToken, baseUrl),
       },
     };
   }
