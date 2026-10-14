@@ -22,7 +22,7 @@ async function call(url, init = {}) {
   if (!res.ok) throw new Error(`HTTP ${res.status}${body?.error ? ` · ${body.error.code ?? ""} ${body.error.message ?? ""}` : ""}`);
   return body;
 }
-const current = async () => (await call(`${base}?fields=ice_breakers&platform=instagram`)).data?.[0]?.call_to_actions ?? [];
+const current = async () => (await call(`${base}?fields=ice_breakers&platform=instagram`)).data?.[0]?.ice_breakers?.[0]?.call_to_actions ?? [];
 const print = (list) => { if (!list.length) console.log("  (tanımlı buzkıran yok)"); for (const c of list) console.log(`  - ${c.question}  →  ${c.payload}`); };
 const same = (a, b) => a.length === b.length && a.every((x, i) => x.question === b[i].question && x.payload === b[i].payload);
 
