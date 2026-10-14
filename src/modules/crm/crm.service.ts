@@ -8,7 +8,9 @@ const date = (value: unknown) => /^\d{4}-\d{2}-\d{2}$/.test(String(value || ""))
 const allowed = (value: unknown, values: string[], fallback: string) => values.includes(String(value)) ? String(value) : fallback;
 
 const CUSTOMER_FIELDS = `id::text, lead_id AS "leadId", name, contact_name AS "contactName", email, phone, sector, owner_name AS owner,
-  status, notes, created_at AS "createdAt", updated_at AS "updatedAt"`;
+  status, notes, website, address, tax_office AS "taxOffice", tax_no AS "taxNo", social, contacts, accounts,
+  service_start AS "serviceStart", ad_start AS "adStart", ad_budget::float8 AS "adBudget", billing_day AS "billingDay",
+  next_payment_date AS "nextPaymentDate", created_at AS "createdAt", updated_at AS "updatedAt"`;
 const CONTRACT_FIELDS = `id::text, customer_id::text AS "customerId", title, services, value::float8, monthly_value::float8 AS "monthlyValue",
   currency, billing, status, start_date AS "startDate", end_date AS "endDate", signed_at AS "signedAt", document_url AS "documentUrl", notes,
   created_at AS "createdAt", updated_at AS "updatedAt"`;
@@ -17,6 +19,13 @@ const PAYMENT_FIELDS = `id::text, customer_id::text AS "customerId", contract_id
 const TASK_FIELDS = `id::text, customer_id::text AS "customerId", title, assignee, due_date AS "dueDate", status, notes,
   created_at AS "createdAt", updated_at AS "updatedAt"`;
 const ACTIVITY_FIELDS = `id::text, customer_id::text AS "customerId", type, summary, occurred_at AS at, created_by AS "createdBy"`;
+
+const SOCIAL = ["instagram", "facebook", "tiktok", "youtube", "x", "linkedin", "google", "whatsapp"];
+const social = (value: any) => Object.fromEntries(SOCIAL.map((key) => [key, text(value?.[key], 200)]).filter(([, v]) => v));
+const list = (value: any, keys: string[], max = 20) => (Array.isArray(value) ? value : []).slice(0, max)
+  .map((row: any) => Object.fromEntries(keys.map((key) => [key, text(row?.[key], key === "note" ? 500 : 200)])))
+  .filter((row: any) => Object.values(row).some(Boolean));
+const day = (value: unknown) => { const n = Math.floor(Number(value)); return n >= 1 && n <= 31 ? n : null; };
 
 @Injectable()
 export class CrmService {
@@ -51,24 +60,37 @@ export class CrmService {
     const name = text(input?.name, 120);
     if (!name) throw new Error("Müşteri adı gerekli");
     const result = await this.database.query(`INSERT INTO customers
-      (name, contact_name, email, phone, status, owner_name, sector, lead_id, notes)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING ${CUSTOMER_FIELDS}`,
+      (name, contact_name, email, phone, status, owner_name, sector, lead_id, notes,
+       website, address, tax_office, tax_no, social, contacts, accounts, service_start, ad_start, ad_budget, billing_day, next_payment_date)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14::jsonb,$15::jsonb,$16::jsonb,$17,$18,$19,$20,$21) RETURNING ${CUSTOMER_FIELDS}`,
       [name, text(input.contactName, 100) || null, text(input.email, 120).toLowerCase() || null, text(input.phone, 40) || null,
        allowed(input.status, ["onboarding", "active", "paused", "completed", "lost"], "onboarding"), text(input.owner, 80) || null,
-       text(input.sector, 100) || null, text(input.leadId, 120) || null, text(input.notes, 2000) || null]);
+       text(input.sector, 100) || null, text(input.leadId, 120) || null, text(input.notes, 2000) || null,
+       text(input.website, 200) || null, text(input.address, 500) || null, text(input.taxOffice, 100) || null, text(input.taxNo, 40) || null,
+       JSON.stringify(social(input.social)), JSON.stringify(list(input.contacts, ["label", "name", "email", "phone"])),
+       JSON.stringify(list(input.accounts, ["platform", "username", "password", "note"])),
+       date(input.serviceStart), date(input.adStart), input.adBudget ? money(input.adBudget) : null, day(input.billingDay), date(input.nextPaymentDate)]);
     await this.createActivity({ customerId: result.rows[0].id, type: "customer_created", summary: "Müşteri kaydı oluşturuldu" });
     return result.rows[0];
   }
 
   async updateCustomer(customerId: string, patch: any) {
-    const current = await this.customer(customerId);
+    const c = await this.customer(customerId);
+    const has = (key: string) => key in patch;
+    const str = (key: string, max: number, cur: any, lower = false) => has(key) ? (lower ? text(patch[key], max).toLowerCase() : text(patch[key], max)) || null : cur;
     const result = await this.database.query(`UPDATE customers SET name=$2, contact_name=$3, email=$4, phone=$5, owner_name=$6,
-      sector=$7, notes=$8, status=$9, updated_at=now() WHERE id=$1 RETURNING ${CUSTOMER_FIELDS}`,
-      [customerId, "name" in patch ? text(patch.name, 120) : current.name, "contactName" in patch ? text(patch.contactName, 100) || null : current.contactName,
-       "email" in patch ? text(patch.email, 120).toLowerCase() || null : current.email, "phone" in patch ? text(patch.phone, 40) || null : current.phone,
-       "owner" in patch ? text(patch.owner, 80) || null : current.owner, "sector" in patch ? text(patch.sector, 100) || null : current.sector,
-       "notes" in patch ? text(patch.notes, 2000) || null : current.notes,
-       patch.status ? allowed(patch.status, ["onboarding", "active", "paused", "completed", "lost"], current.status) : current.status]);
+      sector=$7, notes=$8, status=$9, website=$10, address=$11, tax_office=$12, tax_no=$13, social=$14::jsonb, contacts=$15::jsonb,
+      accounts=$16::jsonb, service_start=$17, ad_start=$18, ad_budget=$19, billing_day=$20, next_payment_date=$21, updated_at=now()
+      WHERE id=$1 RETURNING ${CUSTOMER_FIELDS}`,
+      [customerId, has("name") ? text(patch.name, 120) || c.name : c.name, str("contactName", 100, c.contactName), str("email", 120, c.email, true),
+       str("phone", 40, c.phone), str("owner", 80, c.owner), str("sector", 100, c.sector), has("notes") ? text(patch.notes, 2000) || null : c.notes,
+       patch.status ? allowed(patch.status, ["onboarding", "active", "paused", "completed", "lost"], c.status) : c.status,
+       str("website", 200, c.website), str("address", 500, c.address), str("taxOffice", 100, c.taxOffice), str("taxNo", 40, c.taxNo),
+       JSON.stringify(has("social") ? social(patch.social) : c.social), JSON.stringify(has("contacts") ? list(patch.contacts, ["label", "name", "email", "phone"]) : c.contacts),
+       JSON.stringify(has("accounts") ? list(patch.accounts, ["platform", "username", "password", "note"]) : c.accounts),
+       has("serviceStart") ? date(patch.serviceStart) : c.serviceStart, has("adStart") ? date(patch.adStart) : c.adStart,
+       has("adBudget") ? (patch.adBudget ? money(patch.adBudget) : null) : c.adBudget, has("billingDay") ? day(patch.billingDay) : c.billingDay,
+       has("nextPaymentDate") ? date(patch.nextPaymentDate) : c.nextPaymentDate]);
     return result.rows[0];
   }
 

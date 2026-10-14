@@ -18,6 +18,18 @@ model Customer {
   ownerName   String?    @map("owner_name") @db.VarChar(80)
   status      String     @default("onboarding") @db.VarChar(24)
   notes       String?
+  website     String?    @db.VarChar(200)
+  address     String?
+  taxOffice   String?    @map("tax_office") @db.VarChar(100)
+  taxNo       String?    @map("tax_no") @db.VarChar(40)
+  social      Json       @default("{}")
+  contacts    Json       @default("[]")
+  accounts    Json       @default("[]")
+  serviceStart DateTime? @map("service_start") @db.Date
+  adStart     DateTime?  @map("ad_start") @db.Date
+  adBudget    Decimal?   @map("ad_budget") @db.Decimal(14, 2)
+  billingDay  Int?       @map("billing_day") @db.SmallInt
+  nextPaymentDate DateTime? @map("next_payment_date") @db.Date
   createdAt   DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt   DateTime   @default(now()) @map("updated_at") @db.Timestamptz(6)
   contracts   Contract[]
