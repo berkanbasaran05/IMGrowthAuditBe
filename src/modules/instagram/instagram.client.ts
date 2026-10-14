@@ -51,7 +51,7 @@ export class IgClient {
 
   // Buzkıranlar (ice breakers): /me/messenger_profile, platform=instagram. En fazla 4 soru.
   setIceBreakers(items: { question: string; payload: string }[]) {
-    return this.post("me/messenger_profile", { platform: "instagram", ice_breakers: [{ call_to_actions: items.slice(0, 4) }] }, "Buzkıran ayarı");
+    return this.post("me/messenger_profile", { platform: "instagram", ice_breakers: [{ call_to_actions: items.slice(0, 4), locale: "default" }] }, "Buzkıran ayarı");
   }
   async getIceBreakers(): Promise<any> {
     const res = await this.fetcher(`${this.base()}/me/messenger_profile?fields=ice_breakers&platform=instagram`, { headers: { Authorization: `Bearer ${await this.token()}` }, signal: AbortSignal.timeout(15_000) });

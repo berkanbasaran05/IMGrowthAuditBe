@@ -31,6 +31,6 @@ try {
   console.log("Mevcut buzkıranlar:"); print(before);
   if (process.argv.includes("--show")) process.exit(0);
   if (same(before, ICE_BREAKERS)) { console.log("Zaten güncel; değişiklik yapılmadı."); process.exit(0); }
-  await call(base, { method: "POST", body: JSON.stringify({ platform: "instagram", ice_breakers: [{ call_to_actions: ICE_BREAKERS }] }) });
+  await call(base, { method: "POST", body: JSON.stringify({ platform: "instagram", ice_breakers: [{ call_to_actions: ICE_BREAKERS, locale: "default" }] }) });
   console.log("Buzkıranlar ayarlandı. Şimdiki durum:"); print(await current());
 } catch (e) { console.error(`Hata: ${e.message}`); process.exit(1); }

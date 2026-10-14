@@ -182,7 +182,7 @@ describe("Graph istemcisi", () => {
     assert.deepEqual(calls[1].body, { recipient: { id: "555" }, sender_action: "typing_on" });
     await c.setIceBreakers([{ question: "q", payload: "P" }]);
     assert.equal(calls[2].url, "https://graph.instagram.com/v25.0/me/messenger_profile");
-    assert.deepEqual(calls[2].body, { platform: "instagram", ice_breakers: [{ call_to_actions: [{ question: "q", payload: "P" }] }] });
+    assert.deepEqual(calls[2].body, { platform: "instagram", ice_breakers: [{ call_to_actions: [{ question: "q", payload: "P" }], locale: "default" }] });
     await c.getIceBreakers();
     assert.match(calls[3].url, /messenger_profile\?fields=ice_breakers/);
   });
