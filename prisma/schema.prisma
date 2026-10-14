@@ -36,6 +36,7 @@ model Customer {
   adServiceFee Decimal?  @map("ad_service_fee") @db.Decimal(14, 2)
   dailyAdBudget Decimal? @map("daily_ad_budget") @db.Decimal(14, 2)
   logo        String?
+  firstMonthNote String? @map("first_month_note")
   createdAt   DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt   DateTime   @default(now()) @map("updated_at") @db.Timestamptz(6)
   contracts   Contract[]

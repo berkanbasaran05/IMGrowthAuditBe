@@ -9,15 +9,15 @@ const allowed = (value: unknown, values: string[], fallback: string) => values.i
 
 const CUSTOMER_FIELDS = `id::text, lead_id AS "leadId", name, contact_name AS "contactName", email, phone, sector, owner_name AS owner,
   status, notes, website, address, tax_office AS "taxOffice", tax_no AS "taxNo", social, contacts, accounts,
-  service_start AS "serviceStart", ad_start AS "adStart", ad_budget::float8 AS "adBudget", billing_day AS "billingDay",
-  next_payment_date AS "nextPaymentDate", services, package_name AS "packageName", site_fee::float8 AS "siteFee",
-  ad_service_fee::float8 AS "adServiceFee", daily_ad_budget::float8 AS "dailyAdBudget", logo, created_at AS "createdAt", updated_at AS "updatedAt"`;
+  service_start::text AS "serviceStart", ad_start::text AS "adStart", ad_budget::float8 AS "adBudget", billing_day AS "billingDay",
+  next_payment_date::text AS "nextPaymentDate", services, package_name AS "packageName", site_fee::float8 AS "siteFee",
+  ad_service_fee::float8 AS "adServiceFee", daily_ad_budget::float8 AS "dailyAdBudget", logo, first_month_note AS "firstMonthNote", created_at AS "createdAt", updated_at AS "updatedAt"`;
 const CONTRACT_FIELDS = `id::text, customer_id::text AS "customerId", title, services, value::float8, monthly_value::float8 AS "monthlyValue",
-  currency, billing, status, start_date AS "startDate", end_date AS "endDate", signed_at AS "signedAt", document_url AS "documentUrl", notes,
+  currency, billing, status, start_date::text AS "startDate", end_date::text AS "endDate", signed_at::text AS "signedAt", document_url AS "documentUrl", notes,
   created_at AS "createdAt", updated_at AS "updatedAt"`;
 const PAYMENT_FIELDS = `id::text, customer_id::text AS "customerId", contract_id::text AS "contractId", amount::float8, currency, status,
-  due_date AS "dueDate", paid_at AS "paidAt", invoice_no AS "invoiceNo", notes, created_at AS "createdAt", updated_at AS "updatedAt"`;
-const TASK_FIELDS = `id::text, customer_id::text AS "customerId", title, assignee, due_date AS "dueDate", status, notes,
+  due_date::text AS "dueDate", paid_at::text AS "paidAt", invoice_no AS "invoiceNo", notes, created_at AS "createdAt", updated_at AS "updatedAt"`;
+const TASK_FIELDS = `id::text, customer_id::text AS "customerId", title, assignee, due_date::text AS "dueDate", status, notes,
   created_at AS "createdAt", updated_at AS "updatedAt"`;
 const ACTIVITY_FIELDS = `id::text, customer_id::text AS "customerId", type, summary, occurred_at AS at, created_by AS "createdBy"`;
 
@@ -43,19 +43,26 @@ export class CrmService {
       this.database.query(`SELECT ${ACTIVITY_FIELDS} FROM activities ORDER BY occurred_at DESC`),
       this.database.query(`SELECT ${TASK_FIELDS} FROM tasks ORDER BY due_date ASC NULLS LAST, created_at DESC`),
     ]);
-    const liveContracts = contracts.rows.filter((row: any) => ["signed", "active", "completed"].includes(row.status));
-    const contracted = liveContracts.reduce((sum: number, row: any) => sum + money(row.value), 0);
-    const collected = payments.rows.filter((row: any) => row.status === "paid").reduce((sum: number, row: any) => sum + money(row.amount), 0);
-    const monthly = contracts.rows.filter((row: any) => row.status === "active").reduce((sum: number, row: any) => sum + money(row.monthlyValue), 0);
+    const sum = (rows: any[], pick: (row: any) => unknown) => rows.reduce((total: number, row: any) => total + money(pick(row)), 0);
+    const activeIds = new Set(customers.rows.filter((row: any) => row.status === "active").map((row: any) => row.id));
+    const activeCustomers = customers.rows.filter((row: any) => activeIds.has(row.id));
+    const monthly = activeCustomers.reduce((total: number, row: any) => {
+      const own = money(row.adServiceFee);
+      return total + (own || sum(contracts.rows.filter((c: any) => c.customerId === row.id && c.status === "active"), (c) => c.monthlyValue));
+    }, 0);
+    const siteTotal = sum(customers.rows, (row) => row.siteFee);
+    const open = payments.rows.filter((row: any) => row.status === "planned" || row.status === "invoiced");
+    const collected = sum(payments.rows.filter((row: any) => row.status === "paid"), (row) => row.amount);
+    const pending = sum(open, (row) => row.amount);
     const today = new Date().toISOString().slice(0, 10);
     return {
       customers: customers.rows, contracts: contracts.rows, payments: payments.rows, activities: activities.rows, tasks: tasks.rows,
       summary: {
         customers: customers.rowCount,
-        activeCustomers: customers.rows.filter((row: any) => row.status === "active").length,
-        contracted, collected, outstanding: Math.max(0, contracted - collected), monthly,
+        activeCustomers: activeCustomers.length,
+        monthly, siteTotal, collected, pending, yearly: monthly * 12,
         openTasks: tasks.rows.filter((row: any) => row.status !== "done").length,
-        overduePayments: payments.rows.filter((row: any) => row.status !== "paid" && row.dueDate && String(row.dueDate).slice(0, 10) < today).length,
+        overduePayments: open.filter((row: any) => row.dueDate && String(row.dueDate).slice(0, 10) < today).length,
       },
     };
   }
@@ -66,8 +73,8 @@ export class CrmService {
     const result = await this.database.query(`INSERT INTO customers
       (name, contact_name, email, phone, status, owner_name, sector, lead_id, notes,
        website, address, tax_office, tax_no, social, contacts, accounts, service_start, ad_start, ad_budget, billing_day, next_payment_date,
-       services, package_name, site_fee, ad_service_fee, daily_ad_budget, logo)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14::jsonb,$15::jsonb,$16::jsonb,$17,$18,$19,$20,$21,$22::jsonb,$23,$24,$25,$26,$27) RETURNING ${CUSTOMER_FIELDS}`,
+       services, package_name, site_fee, ad_service_fee, daily_ad_budget, logo, first_month_note)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14::jsonb,$15::jsonb,$16::jsonb,$17,$18,$19,$20,$21,$22::jsonb,$23,$24,$25,$26,$27,$28) RETURNING ${CUSTOMER_FIELDS}`,
       [name, text(input.contactName, 100) || null, text(input.email, 120).toLowerCase() || null, text(input.phone, 40) || null,
        allowed(input.status, ["onboarding", "active", "paused", "completed", "lost"], "onboarding"), text(input.owner, 80) || null,
        text(input.sector, 100) || null, text(input.leadId, 120) || null, text(input.notes, 2000) || null,
@@ -75,7 +82,7 @@ export class CrmService {
        JSON.stringify(social(input.social)), JSON.stringify(list(input.contacts, ["label", "name", "email", "phone"])),
        JSON.stringify(list(input.accounts, ["platform", "username", "password", "note"])),
        date(input.serviceStart), date(input.adStart), input.adBudget ? money(input.adBudget) : null, day(input.billingDay), date(input.nextPaymentDate),
-       JSON.stringify(svc(input.services)), text(input.packageName, 120) || null, optMoney(input.siteFee), optMoney(input.adServiceFee), optMoney(input.dailyAdBudget), logo(input.logo)]);
+       JSON.stringify(svc(input.services)), text(input.packageName, 120) || null, optMoney(input.siteFee), optMoney(input.adServiceFee), optMoney(input.dailyAdBudget), logo(input.logo), text(input.firstMonthNote, 1000) || null]);
     await this.createActivity({ customerId: result.rows[0].id, type: "customer_created", summary: "Müşteri kaydı oluşturuldu" });
     return result.rows[0];
   }
@@ -87,7 +94,7 @@ export class CrmService {
     const result = await this.database.query(`UPDATE customers SET name=$2, contact_name=$3, email=$4, phone=$5, owner_name=$6,
       sector=$7, notes=$8, status=$9, website=$10, address=$11, tax_office=$12, tax_no=$13, social=$14::jsonb, contacts=$15::jsonb,
       accounts=$16::jsonb, service_start=$17, ad_start=$18, ad_budget=$19, billing_day=$20, next_payment_date=$21,
-      services=$22::jsonb, package_name=$23, site_fee=$24, ad_service_fee=$25, daily_ad_budget=$26, logo=$27, updated_at=now()
+      services=$22::jsonb, package_name=$23, site_fee=$24, ad_service_fee=$25, daily_ad_budget=$26, logo=$27, first_month_note=$28, updated_at=now()
       WHERE id=$1 RETURNING ${CUSTOMER_FIELDS}`,
       [customerId, has("name") ? text(patch.name, 120) || c.name : c.name, str("contactName", 100, c.contactName), str("email", 120, c.email, true),
        str("phone", 40, c.phone), str("owner", 80, c.owner), str("sector", 100, c.sector), has("notes") ? text(patch.notes, 2000) || null : c.notes,
@@ -100,7 +107,7 @@ export class CrmService {
        has("nextPaymentDate") ? date(patch.nextPaymentDate) : c.nextPaymentDate,
        JSON.stringify(has("services") ? svc(patch.services) : c.services), str("packageName", 120, c.packageName),
        has("siteFee") ? optMoney(patch.siteFee) : c.siteFee, has("adServiceFee") ? optMoney(patch.adServiceFee) : c.adServiceFee,
-       has("dailyAdBudget") ? optMoney(patch.dailyAdBudget) : c.dailyAdBudget, has("logo") ? logo(patch.logo) : c.logo]);
+       has("dailyAdBudget") ? optMoney(patch.dailyAdBudget) : c.dailyAdBudget, has("logo") ? logo(patch.logo) : c.logo, str("firstMonthNote", 1000, c.firstMonthNote)]);
     return result.rows[0];
   }
 
@@ -160,12 +167,23 @@ export class CrmService {
 
   async updateRecord(kind: "contracts" | "payments" | "tasks", recordId: string, patch: any) {
     const values = kind === "contracts" ? ["draft","sent","signed","active","completed","cancelled"] : kind === "payments" ? ["planned","invoiced","paid","cancelled"] : ["todo","doing","done"];
-    const current = await this.database.query(`SELECT status FROM ${kind} WHERE id=$1`, [recordId]);
+    const current = await this.database.query(`SELECT *, to_char(due_date, 'YYYY-MM-DD') AS due_text, to_char(paid_at, 'YYYY-MM-DD') AS paid_text FROM ${kind} WHERE id=$1`, [recordId]);
     if (!current.rowCount) throw new Error("Kayıt bulunamadı");
-    const status = allowed(patch?.status, values, current.rows[0].status);
+    const row = current.rows[0];
+    const status = allowed(patch?.status, values, row.status);
     const fields = kind === "contracts" ? CONTRACT_FIELDS : kind === "payments" ? PAYMENT_FIELDS : TASK_FIELDS;
-    const paid = kind === "payments" && status === "paid" ? ", paid_at=COALESCE(paid_at, CURRENT_DATE)" : "";
-    const result = await this.database.query(`UPDATE ${kind} SET status=$2, updated_at=now()${paid} WHERE id=$1 RETURNING ${fields}`, [recordId, status]);
+    if (kind === "payments") {
+      const amount = "amount" in patch ? money(patch.amount) : Number(row.amount);
+      if (!amount) throw new Error("Ödeme tutarı gerekli");
+      const paidAt = "paidAt" in patch ? date(patch.paidAt) : null;
+      const result = await this.database.query(`UPDATE payments SET status=$2, amount=$3, currency=$4, due_date=$5, paid_at=$6, invoice_no=$7, notes=$8, updated_at=now()
+        WHERE id=$1 RETURNING ${fields}`,
+        [recordId, status, amount, "currency" in patch ? allowed(patch.currency, ["TRY","USD","EUR","GBP"], row.currency) : row.currency,
+         "dueDate" in patch ? date(patch.dueDate) : row.due_text, status === "paid" ? paidAt || row.paid_text || new Date().toISOString().slice(0, 10) : paidAt,
+         "invoiceNo" in patch ? text(patch.invoiceNo, 80) || null : row.invoice_no, "notes" in patch ? text(patch.notes, 1000) || null : row.notes]);
+      return result.rows[0];
+    }
+    const result = await this.database.query(`UPDATE ${kind} SET status=$2, updated_at=now() WHERE id=$1 RETURNING ${fields}`, [recordId, status]);
     return result.rows[0];
   }
 
