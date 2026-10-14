@@ -17,20 +17,47 @@ export class IgClient {
   private base() { return `https://graph.instagram.com/${this.cfg.version}`; }
   async token() { return (await this.tokens?.get().catch(() => null)) || this.cfg.accessToken; }
 
-  async send(igsid: string, text: string, quickReplies?: object[]) {
-    const message: any = { text };
-    if (quickReplies?.length) message.quick_replies = quickReplies;
-    const res = await this.fetcher(`${this.base()}/${encodeURIComponent(this.cfg.accountId)}/messages`, {
+  private async post(path: string, body: object, what: string) {
+    const res = await this.fetcher(`${this.base()}/${path}`, {
       method: "POST",
       headers: { Authorization: `Bearer ${await this.token()}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ recipient: { id: igsid }, message }),
+      body: JSON.stringify(body),
       signal: AbortSignal.timeout(15_000),
     });
     if (!res.ok) {
-      const body = await res.json().catch(() => ({}));
-      throw new Error(`Instagram gönderimi başarısız (${res.status}${body?.error?.code ? `, kod ${body.error.code}` : ""})`);
+      const b = await res.json().catch(() => ({}));
+      throw new Error(`${what} başarısız (${res.status}${b?.error?.code ? `, kod ${b.error.code}` : ""})`);
     }
     return res.json().catch(() => ({}));
+  }
+  private msgPath() { return `${encodeURIComponent(this.cfg.accountId)}/messages`; }
+
+  // Herhangi bir mesaj nesnesi (metin, şablon). Hızlı yanıtlar message.quick_replies içinde.
+  sendMessage(igsid: string, message: object) {
+    return this.post(this.msgPath(), { recipient: { id: igsid }, message }, "Instagram gönderimi");
+  }
+
+  send(igsid: string, text: string, quickReplies?: object[]) {
+    const message: any = { text };
+    if (quickReplies?.length) message.quick_replies = quickReplies;
+    return this.sendMessage(igsid, message);
+  }
+
+  // typing_on / typing_off / mark_seen. En iyi çaba: hata yutulur.
+  async action(igsid: string, action: "typing_on" | "typing_off" | "mark_seen") {
+    try { await this.post(this.msgPath(), { recipient: { id: igsid }, sender_action: action }, "Gönderen eylemi"); return true; }
+    catch { return false; }
+  }
+
+  // Buzkıranlar (ice breakers): /me/messenger_profile, platform=instagram. En fazla 4 soru.
+  setIceBreakers(items: { question: string; payload: string }[]) {
+    return this.post("me/messenger_profile", { platform: "instagram", ice_breakers: [{ call_to_actions: items.slice(0, 4) }] }, "Buzkıran ayarı");
+  }
+  async getIceBreakers(): Promise<any> {
+    const res = await this.fetcher(`${this.base()}/me/messenger_profile?fields=ice_breakers&platform=instagram`, { headers: { Authorization: `Bearer ${await this.token()}` }, signal: AbortSignal.timeout(15_000) });
+    const j = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(`Buzkıranlar okunamadı (${res.status}${j?.error?.code ? `, kod ${j.error.code}` : ""})`);
+    return j;
   }
 
   // En iyi çaba: kullanıcı adı alınamazsa null.

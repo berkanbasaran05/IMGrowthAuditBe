@@ -4,7 +4,7 @@ import { getOne, put } from "../growth/lib/redis.js";
 import { decryptSecret, encryptionConfigured, encryptSecret } from "../growth-manager/security.js";
 import { PublicAuditError, PublicAuditService, domainOf } from "../audit/public-audit.service.js";
 import { IgClient, type TokenStore } from "./instagram.client.js";
-import { COPY, HANDOFF_MS, YES_NO, auditsUsedToday, dayKey, decide, formatResult, parseWebhook, type IncomingMessage } from "./instagram.logic.js";
+import { ABOUT_QUICK, COPY, HANDOFF_MS, RESULT_QUICK, auditsUsedToday, dayKey, decide, progressLevel, resultCard, stepsText, parseWebhook, type IncomingMessage } from "./instagram.logic.js";
 
 // Instagram DM analiz botu. Durum ig_conversations tablosunda tutulur; bekleyen analizler 15 sn'de bir
 // yoklanır (sunucu yeniden başlasa da sonuç gönderilir). Ekibe Telegram/e-posta bildirimi GÖNDERİLMEZ:
@@ -86,8 +86,23 @@ export class InstagramService implements OnModuleInit, OnModuleDestroy {
     } catch (e: any) { if (e?.code === "P2002") return false; throw e; }
   }
 
+  // Her gönderimden önce "yazıyor…" gösterilir (en iyi çaba).
   private async send(igsid: string, texts: string[], quickReplies?: object[]) {
-    for (let i = 0; i < texts.length; i++) await this.client!.send(igsid, texts[i], i === texts.length - 1 ? quickReplies : undefined);
+    for (let i = 0; i < texts.length; i++) {
+      await this.client!.action(igsid, "typing_on");
+      await this.client!.send(igsid, texts[i], i === texts.length - 1 ? quickReplies : undefined);
+    }
+  }
+
+  // Sonuç kartı: generic template → button template → URL'siz metin + not.
+  private async sendCard(igsid: string, card: ReturnType<typeof resultCard>) {
+    await this.client!.action(igsid, "typing_on");
+    try { await this.client!.sendMessage(igsid, card.generic); return "generic"; }
+    catch (e: any) { this.log.warn(`Kart gönderilemedi, buton şablonu deneniyor: ${e.message}`); }
+    try { await this.client!.sendMessage(igsid, card.button); return "button"; }
+    catch (e: any) { this.log.warn(`Buton şablonu gönderilemedi, metne düşülüyor: ${e.message}`); }
+    await this.client!.send(igsid, `${card.text}\n\n${COPY.noLinkNote}`);
+    return "text";
   }
 
   async handleMessage(msg: IncomingMessage, now = new Date()) {
@@ -105,6 +120,7 @@ export class InstagramService implements OnModuleInit, OnModuleDestroy {
       case "silent": return;
       case "busy": return this.send(msg.igsid, [COPY.busy]);
       case "help": return this.send(msg.igsid, [COPY.help]);
+      case "about": return this.send(msg.igsid, [COPY.about], ABOUT_QUICK);
       case "rate_limited": await set({ state: "idle" }); return this.send(msg.igsid, [COPY.rateLimited]);
       case "ask_url": await set({ state: "awaiting_url", handoffUntil: null }); return this.send(msg.igsid, [COPY.askUrl]);
       case "no": await set({ state: "idle" }); return this.send(msg.igsid, [COPY.no]);
@@ -115,6 +131,7 @@ export class InstagramService implements OnModuleInit, OnModuleDestroy {
       }
       case "start_audit": {
         const domain = domainOf(action.url.toString()) || action.url.hostname;
+        await this.client!.action(msg.igsid, "mark_seen");
         let started: { token: string; leadId: string; auditId?: string };
         try {
           started = await this.publicAudits.submit({
@@ -131,6 +148,7 @@ export class InstagramService implements OnModuleInit, OnModuleDestroy {
           auditsDay: today, auditsToday: auditsUsedToday(conv as any, now) + 1, auditsTotal: { increment: 1 },
         });
         await this.tagLead(started.leadId, msg.igsid, conv.username).catch(() => {});
+        await this.prisma.keyValue.deleteMany({ where: { key: progressKey(msg.igsid) } }).catch(() => {});
         return this.send(msg.igsid, [COPY.started(domain)]);
       }
     }
@@ -161,22 +179,26 @@ export class InstagramService implements OnModuleInit, OnModuleDestroy {
 
   private async deliver(c: { igsid: string; publicToken: string | null; domain: string | null; updatedAt: Date }, now: Date) {
     const domain = c.domain || "Siteniz";
-    const out = c.publicToken ? await this.publicAudits.poll(c.publicToken, reportBase()) : null;
-    let texts: string[], quick: object[] | undefined, next = "idle", score: number | null = null;
+    const out: any = c.publicToken ? await this.publicAudits.poll(c.publicToken, reportBase()) : null;
+    let texts: string[] = [], quick: object[] | undefined, next = "idle", score: number | null = null, card: ReturnType<typeof resultCard> | null = null;
     if (out?.status === "processing") {
-      if (now.getTime() - c.updatedAt.getTime() < AUDIT_GIVEUP_MS) return;
+      if (now.getTime() - c.updatedAt.getTime() < AUDIT_GIVEUP_MS) return this.maybeProgress(c.igsid, out.progress);
       texts = [COPY.failed(domain)];
     } else if (out?.status === "completed") {
-      const r = (out as any).result;
+      const r = out.result;
       score = r.overallScore;
-      texts = formatResult({ domain, score, grade: r.grade, steps: r.topOpportunities.map((o: any) => o.title), reportUrl: r.reportUrl });
-      quick = YES_NO; next = "result_sent";
+      const steps = r.topOpportunities.map((o: any) => o.title);
+      card = resultCard({ domain, score, grade: r.grade, steps, reportUrl: r.reportUrl });
+      const st = stepsText(steps);
+      texts = [st || "Detaylı rapordaki önerileri ekibimizle birlikte değerlendirebilirsiniz."];
+      quick = RESULT_QUICK; next = "result_sent";
     } else if (out?.status === "no_website") texts = [COPY.noWebsite(domain)];
     else texts = [COPY.failed(domain)];
 
     const claimed = await this.prisma.igConversation.updateMany({ where: { igsid: c.igsid, state: "auditing" }, data: { state: "sending" } });
     if (claimed.count !== 1) return;
     try {
+      if (card) await this.sendCard(c.igsid, card);
       await this.send(c.igsid, texts, quick);
       await this.prisma.igConversation.update({ where: { igsid: c.igsid }, data: { state: next, publicToken: null, lastScore: score } });
     } catch (e) {
@@ -186,4 +208,18 @@ export class InstagramService implements OnModuleInit, OnModuleDestroy {
       throw e;
     }
   }
+
+  // Gerçek denetim ilerlemesine göre en fazla 2 ara mesaj; düzey key_values'ta tutulur (konuşma satırının updatedAt'ı değişmez).
+  private async maybeProgress(igsid: string, progress: number) {
+    const level = progressLevel(progress);
+    if (!level) return;
+    const key = progressKey(igsid);
+    const row = await this.prisma.keyValue.findUnique({ where: { key } });
+    const sent = row ? Number(row.value) || 0 : 0;
+    if (level <= sent) return;
+    await this.prisma.keyValue.upsert({ where: { key }, create: { key, value: String(level), expiresAt: new Date(Date.now() + 86_400_000) }, update: { value: String(level) } });
+    await this.send(igsid, [level === 2 ? COPY.progressAi : COPY.progressScan]).catch((e) => this.log.warn(`Ara mesaj gönderilemedi: ${e.message}`));
+  }
 }
+
+const progressKey = (igsid: string) => `ig:progress:${igsid}`.slice(0, 300);

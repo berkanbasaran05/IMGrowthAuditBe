@@ -41,6 +41,13 @@ export function parseWebhook(body: any, accountId: string): IncomingMessage[] {
   for (const entry of body.entry) {
     for (const ev of Array.isArray(entry?.messaging) ? entry.messaging : []) {
       const m = ev?.message, sender = String(ev?.sender?.id || "");
+      // Buton / buzkıran dokunuşları (messaging_postbacks): yük, hızlı yanıt gibi işlenir.
+      const pb = ev?.postback;
+      if (!m && pb && typeof pb.payload === "string" && sender && sender !== accountId && sender !== String(entry?.id || "")) {
+        const ts = Number(ev.timestamp || entry.time || Date.now());
+        out.push({ igsid: sender, mid: String(pb.mid || `pb:${sender}:${ts}:${pb.payload}`), text: typeof pb.title === "string" ? pb.title.slice(0, 200) : "", quickReply: pb.payload.slice(0, 100), timestamp: ts });
+        continue;
+      }
       if (!m || ev.read || ev.reaction || m.is_echo || m.is_self || m.is_deleted || m.is_unsupported) continue;
       if (!sender || sender === accountId || sender === String(entry?.id || "")) continue;
       const qr = typeof m.quick_reply?.payload === "string" ? m.quick_reply.payload : null;
@@ -68,10 +75,15 @@ export function extractUrl(text: string): URL | null {
   return null;
 }
 
-export type Intent = "analyze" | "url" | "yes" | "no" | "other";
+export const PAYLOAD = { start: "START_AUDIT", talk: "TALK_TO_TEAM", about: "ABOUT_AUDIT", yes: "IM_YES", no: "IM_NO" } as const;
+
+export type Intent = "analyze" | "url" | "yes" | "no" | "about" | "other";
 export function detectIntent(msg: { text: string; quickReply?: string | null }): Intent {
-  if (msg.quickReply === "IM_YES") return "yes";
-  if (msg.quickReply === "IM_NO") return "no";
+  const p = msg.quickReply;
+  if (p === PAYLOAD.yes || p === PAYLOAD.talk) return "yes";
+  if (p === PAYLOAD.no) return "no";
+  if (p === PAYLOAD.start) return "analyze";
+  if (p === PAYLOAD.about) return "about";
   if (extractUrl(msg.text)) return "url";
   const t = fold(msg.text).replace(/[^a-z0-9 ]/g, "").trim();
   if (/^(analiz|analiz yap|analiz et|analiz istiyorum|ucretsiz analiz|analyze|analysis|audit)$/.test(t) || /^analiz\b/.test(t)) return "analyze";
@@ -84,7 +96,7 @@ export type State = "idle" | "awaiting_url" | "auditing" | "sending" | "result_s
 export interface ConvLike { state: State | string; handoffUntil?: Date | null; auditsDay?: string | null; auditsToday?: number }
 export type Action =
   | { kind: "ask_url" } | { kind: "start_audit"; url: URL } | { kind: "busy" } | { kind: "yes" } | { kind: "no" }
-  | { kind: "help" } | { kind: "silent" } | { kind: "rate_limited" };
+  | { kind: "help" } | { kind: "silent" } | { kind: "rate_limited" } | { kind: "about" };
 
 export const dayKey = (now = new Date()) => new Date(now.getTime() + 3 * 3_600_000).toISOString().slice(0, 10); // İstanbul günü
 export const auditsUsedToday = (c: ConvLike, now = new Date()) => (c.auditsDay === dayKey(now) ? c.auditsToday || 0 : 0);
@@ -101,30 +113,42 @@ export function decide(conv: ConvLike | null, msg: { text: string; quickReply?: 
     return { kind: "start_audit", url: extractUrl(msg.text)! };
   }
   if (intent === "analyze") return { kind: "ask_url" };
-  if (state === "result_sent" && intent === "yes") return { kind: "yes" };
+  if (intent === "about") return { kind: "about" };
+  // "Ücretsiz görüşme" butonu / buzkıran her durumda; yazılı "evet" yalnızca sonuçtan sonra.
+  if (msg.quickReply === PAYLOAD.talk || (state === "result_sent" && intent === "yes")) return { kind: "yes" };
   if (state === "result_sent" && intent === "no") return { kind: "no" };
   if (state === "awaiting_url") return { kind: "ask_url" };
   return { kind: "help" };
 }
 
 export const COPY = {
-  askUrl: "Merhaba! 👋 Sitenizi ücretsiz analiz edelim. Web sitenizin adresini yazar mısınız? (ör. ornekfirma.com)",
-  started: (domain: string) => `Teşekkürler! ${domain} analiz ediliyor ⏳ 1–3 dakika sürer, sonuç buraya gelecek.`,
-  busy: "Analiziniz devam ediyor ⏳ Sonuç hazır olunca buraya göndereceğiz.",
-  invalidUrl: "Bu adresi analiz edemedik 🙁 Lütfen adresi kontrol edip tekrar yazar mısınız? (ör. ornekfirma.com)",
-  rateLimited: "Bugünlük ücretsiz analiz hakkınız doldu. Yarın tekrar deneyebilirsiniz 🙏",
-  noWebsite: (domain: string) => `${domain} adresindeki siteye ulaşamadık 🙁 Adresi kontrol edip tekrar yazar mısınız? Farklı bir adres de gönderebilirsiniz.`,
-  failed: (domain: string) => `${domain} için analiz şu an tamamlanamadı 🙁 Birkaç dakika sonra adresi tekrar yazarak yeniden deneyebilirsiniz.`,
-  yes: "Teşekkürler! Ekibimiz en kısa sürede buradan size yazacak.",
-  no: "Tamam, teşekkürler! Başka bir site için istediğiniz zaman \"ANALİZ\" yazabilirsiniz.",
-  help: "Merhaba! Web sitenizi ücretsiz analiz etmemizi isterseniz \"ANALİZ\" yazın ya da doğrudan site adresinizi gönderin.",
-  error: "Şu an bir sorun yaşıyoruz 🙁 Lütfen birkaç dakika sonra tekrar deneyin.",
+  askUrl: "Web sitenizi ücretsiz analiz edelim. Site adresinizi yazmanız yeterli (ör. ornekfirma.com).",
+  started: (domain: string) => `🔎 Analiz başladı · ${domain}\nSiteniz 6 kategoride, 30+ kriterle inceleniyor. Sonuç birkaç dakika içinde burada olacak.`,
+  progressScan: "✓ Sayfalar tarandı\n✓ Hız ölçüldü\n⏳ Google görünürlüğü ve dönüşüm noktaları inceleniyor…",
+  progressAi: "✓ Teknik ölçümler tamamlandı\n⏳ Yapay zekâ raporu hazırlıyor…",
+  busy: "Analiziniz sürüyor. Sonuç hazır olduğunda buraya göndereceğiz.",
+  invalidUrl: "Bu adresi analiz edemedik. Adresi kontrol edip tekrar yazar mısınız? (ör. ornekfirma.com)",
+  rateLimited: "Bugünlük ücretsiz analiz hakkınız doldu. Yarın yeniden deneyebilirsiniz.",
+  noWebsite: (domain: string) => `${domain} adresindeki siteye ulaşamadık. Adresi kontrol edip tekrar yazar mısınız? Farklı bir adres de gönderebilirsiniz.`,
+  failed: (domain: string) => `${domain} için analiz şu an tamamlanamadı. Birkaç dakika sonra adresi yeniden yazarak tekrar deneyebilirsiniz.`,
+  yes: "Teşekkürler. Ekibimiz en kısa sürede buradan size yazacak.",
+  no: "Teşekkürler. Başka bir site için istediğiniz zaman adres yazabilir ya da \"ANALİZ\" gönderebilirsiniz.",
+  help: "Web sitenizi ücretsiz analiz edebiliriz. Site adresinizi yazın ya da \"ANALİZ\" gönderin.",
+  about: "Analiz sitenizi 6 kategoride, 30+ kriterle inceler: marka mesajı, kullanım kolaylığı, hız ve teknik altyapı, Google'da bulunma, müşteriye dönüştürme ve güven.\n\nSonuçta 100 üzerinden bir skor, öncelikli 3 adım ve detaylı bir rapor alırsınız. Ücretsizdir, birkaç dakika sürer.",
+  noLinkNote: "Detaylı raporu ekibimiz buradan iletebilir; \"Ücretsiz görüşme\" seçeneğine dokunmanız yeterli.",
+  error: "Şu an bir sorun yaşıyoruz. Lütfen birkaç dakika sonra tekrar deneyin.",
 };
 
-export const YES_NO = [
-  { content_type: "text", title: "EVET", payload: "IM_YES" },
-  { content_type: "text", title: "Hayır", payload: "IM_NO" },
-];
+const qr = (title: string, payload: string) => ({ content_type: "text", title, payload });
+export const YES_NO = [qr("Evet", PAYLOAD.yes), qr("Hayır", PAYLOAD.no)];
+export const RESULT_QUICK = [qr("Ücretsiz görüşme", PAYLOAD.talk), qr("Başka site analiz et", PAYLOAD.start)];
+export const ABOUT_QUICK = [qr("Analizi başlat", PAYLOAD.start)];
+
+// Denetim ilerlemesi → gönderilecek ara mesaj düzeyi (0: yok, 1: tarama/hız bitti, 2: yapay zekâ). En fazla 2 ara mesaj.
+export function progressLevel(progress: number | null | undefined): 0 | 1 | 2 {
+  const p = Number(progress) || 0;
+  return p >= 75 ? 2 : p >= 65 ? 1 : 0;
+}
 
 export const byteLen = (s: string) => Buffer.byteLength(s, "utf8");
 // Metni 1000 bayt sınırına göre paragraf/satır/kelime sınırlarından böler.
@@ -151,11 +175,24 @@ export function splitMessage(text: string, max = MAX_TEXT_BYTES): string[] {
 }
 
 export interface ResultInput { domain: string; score: number | null; grade: string; steps: string[]; reportUrl: string }
-// Sonuç mesajları: skor + öncelikli adımlar, rapor bağlantısı, kapanış (EVET/Hayır hızlı yanıtlarıyla).
-export function formatResult(r: ResultInput): string[] {
-  const head = [`${r.domain} için skorunuz: ${r.score ?? "-"}/100 — ${r.grade}`];
-  if (r.steps.length) head.push("", "Öncelikli 3 adım:", ...r.steps.slice(0, 3).map((s, i) => `${i + 1}. ${s}`));
-  head.push("", `Detaylı rapor: ${r.reportUrl}`);
-  const closing = "Bunları sizin için düzeltmemizi ister misiniz? 'EVET' yazın, ekibimiz size dönsün.";
-  return [...splitMessage(head.join("\n")), closing];
+const cut = (v: string, n: number) => (v.length > n ? v.slice(0, n - 1).trimEnd() + "…" : v);
+
+// Sonuç kartı (generic template): görsel = skor kartı, butonlar = rapor + ücretsiz görüşme. Metinde URL yoktur.
+export function resultCard(r: ResultInput) {
+  const title = cut(`${r.domain} · ${r.score ?? "–"}/100 · ${r.grade}`, 80);
+  const subtitle = cut(r.steps[0] ? `Öncelik: ${r.steps[0]}` : "Detaylı rapor hazır", 80);
+  const buttons = [
+    { type: "web_url", url: r.reportUrl, title: "Detaylı raporu aç" },
+    { type: "postback", title: "Ücretsiz görüşme", payload: PAYLOAD.talk },
+  ];
+  return {
+    generic: { attachment: { type: "template", payload: { template_type: "generic", elements: [{ title, subtitle, image_url: `${r.reportUrl}/card.png`, default_action: { type: "web_url", url: r.reportUrl }, buttons }] } } },
+    button: { attachment: { type: "template", payload: { template_type: "button", text: cut(`${title}\n${subtitle}`, 640), buttons } } },
+    text: `${title}\n${subtitle}`,
+  };
+}
+
+export function stepsText(steps: string[]): string | null {
+  if (!steps.length) return null;
+  return splitMessage(["Öncelikli 3 adım:", ...steps.slice(0, 3).map((s, i) => `${i + 1}. ${s}`)].join("\n"))[0];
 }

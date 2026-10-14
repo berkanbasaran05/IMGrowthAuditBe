@@ -3,11 +3,30 @@
 Instagram'dan DM atan kişiye web sitesinin ücretsiz analizini gönderir. Resmî **Instagram API with Instagram Login** kullanılır (`graph.instagram.com`, Facebook Sayfası gerekmez). Graph sürümü: **v25.0** (`IG_GRAPH_VERSION`).
 
 ## Akış
-1. Kullanıcı "ANALİZ" (büyük/küçük harf ve Türkçe karakterden bağımsız; "analiz yap" vb.) yazar → bot site adresini ister (`awaiting_url`).
-2. Kullanıcı adres yazar (ilk mesajda adres varsa doğrudan) → güvenli URL denetimi (SSRF) → `PublicAuditService.submit` (kaynak `instagram`, Gelen Talepler'de görünür, aynı alan adı için 24 saatlik sonuç yeniden kullanılır) → "analiz ediliyor" mesajı (`auditing`).
-3. İşçi her 15 sn'de bekleyen konuşmaları yoklar; analiz bitince skor + öncelikli 3 adım (sade dil) + rapor bağlantısı + "EVET" çağrısı gönderilir (EVET/Hayır hızlı yanıtlarıyla). Mesajlar 1000 bayt sınırına göre bölünür. Durum veritabanında (`ig_conversations`) tutulduğu için sunucu yeniden başlasa da sonuç gönderilir.
-4. "EVET" → "Ekibimiz en kısa sürede buradan size yazacak." + firma kaydına `inboundWantsContact: true`. Konuşma **72 saat** ekibe devredilir (`handoff`): bot bu sürede yanıt vermez; kullanıcı yeniden "ANALİZ" yazarsa bot yeniden devreye girer.
-5. Site doğrulanamazsa veya analiz başarısız olursa nazik bir mesajla adresin kontrol edilmesi istenir. Boştayken anlaşılmayan mesaja kısa yardım metni gider.
+1. Kullanıcı "ANALİZ" yazar (büyük/küçük harf ve Türkçe karakterden bağımsız) **veya** profildeki buzkıranlardan "🔎 Ücretsiz site analizi"ne dokunur (`START_AUDIT`) → bot site adresini ister (`awaiting_url`).
+2. Kullanıcı adres yazar (ilk mesajda adres varsa doğrudan) → `mark_seen` + `typing_on` → güvenli URL denetimi (SSRF) → `PublicAuditService.submit` (kaynak `instagram`, 24 saatlik sonuç yeniden kullanılır) → `auditing`.
+3. İşçi 15 sn'de bir bekleyen konuşmaları yoklar. Gerçek denetim ilerlemesine göre **en fazla 2** ara mesaj gönderilir (ilerleme ≥ %65 ve ≥ %75; düzey `key_values` içinde `ig:progress:<igsid>`). Bitince kart + öncelikli adımlar gönderilir.
+4. "Ücretsiz görüşme" (kart butonu, hızlı yanıt ya da buzkıran `TALK_TO_TEAM`; sonuçtan sonra yazılı "evet" de olur) → "Ekibimiz en kısa sürede buradan size yazacak." + firma kaydında `inboundWantsContact: true` (firma varsa). Konuşma **72 saat** ekibe devredilir; bu sürede bot susar, yalnızca yeni "ANALİZ"/`START_AUDIT` botu yeniden başlatır.
+5. "ℹ️ Analiz neleri kapsıyor?" (`ABOUT_AUDIT`) → kısa açıklama + "Analizi başlat" hızlı yanıtı.
+6. Site doğrulanamazsa / analiz başarısızsa nazik mesaj. Boştayken anlaşılmayan mesaja kısa yardım metni.
+
+### Mesaj sırası (adres gönderildiğinde)
+Her gönderimden önce `typing_on` gönderilir.
+1. `🔎 Analiz başladı · regeditpos.com` + "Siteniz 6 kategoride, 30+ kriterle inceleniyor. Sonuç birkaç dakika içinde burada olacak."
+2. (ilerleme ≥ %65) "✓ Sayfalar tarandı / ✓ Hız ölçüldü / ⏳ Google görünürlüğü ve dönüşüm noktaları inceleniyor…"
+3. (ilerleme ≥ %75) "✓ Teknik ölçümler tamamlandı / ⏳ Yapay zekâ raporu hazırlıyor…"
+4. **Kart** (generic template): görsel `/r/<rapor-belirteci>/card.png`, başlık `regeditpos.com · 71/100 · Geliştirilebilir`, alt başlık `Öncelik: <ilk sorun>`, butonlar **Detaylı raporu aç** (web_url) ve **Ücretsiz görüşme** (postback `TALK_TO_TEAM`). Başarısızsa button template, o da başarısızsa URL'siz metin + "Ücretsiz görüşme" notu.
+5. "Öncelikli 3 adım:" numaralı liste + hızlı yanıtlar **[Ücretsiz görüşme] [Başka site analiz et]**.
+
+Analiz hızlı biterse (ör. 24 saatlik yeniden kullanım) 2–3 atlanır.
+
+**Mesajlarımızda hiçbir zaman ham URL yoktur.** Kullanıcının kendi yazdığı adres için Instagram'ın gösterdiği bağlantı önizlemesi (ör. `regeditpos.com` yazınca çıkan kart) Instagram istemcisinin davranışıdır; bizim tarafımızdan kapatılamaz.
+
+## Skor kartı görseli
+`GET /r/:token/card.png` (backend, `PublicReportController`): rapor bağlantısıyla aynı belirteç ve doğrulama (geçersiz/süresi dolmuş/iptal → 404), görüntülenme sayılmaz, `Cache-Control: public, max-age=86400`. 1200×628 PNG (1.91:1, generic template varsayılan oranı), `@resvg/resvg-js` ile SVG'den üretilir; Plus Jakarta Sans dosyadan yüklenir (sistem yazı tipi gerekmez). Next.js `/r/:path*` vekili bu yolu backend'e iletir. Kod: `src/modules/sales/report.card.ts`.
+
+## Buzkıranlar (ice breakers)
+`npm run ig:setup-profile` (`scripts/ig-setup-profile.mjs`): `.env` içindeki `IG_ACCESS_TOKEN` ile `POST https://graph.instagram.com/v25.0/me/messenger_profile` (`platform: "instagram"`) çağırır; önce mevcut listeyi yazdırır, liste zaten aynıysa yazmaz. Yalnızca görmek için: `npm run ig:setup-profile -- --show`. Buzkıranlar Instagram masaüstünde görünmez (Meta kısıtı), yalnızca mobil uygulamada yeni sohbet açılırken çıkar. Postback'ler için `messaging_postbacks` aboneliği gerekir.
 
 Bot **Telegram/e-posta bildirimi göndermez**; ekip Instagram'dan elle yanıtlar. Yankılar (`is_echo`), kendi mesajlarımız, tepkiler ve okundu bilgileri yanıtlanmaz. Aynı mesaj kimliği (`mid`) bir kez işlenir. Kullanıcı başına günde en fazla 3 analiz.
 

@@ -33,6 +33,7 @@ describe("Günlük maskeleme", () => {
     assert.equal(http.redactUrl("/r/abcDEF123_-xyz/pdf"), "/r/[gizli]/pdf");
     assert.equal(http.redactUrl("/portal/davet?token=SECRET&x=1"), "/portal/davet?token=[gizli]&x=1");
     assert.equal(http.redactUrl("/oauth/google/callback?code=C&state=S"), "/oauth/google/callback?code=[gizli]&state=[gizli]");
+    assert.equal(http.redactUrl("/api/instagram/webhook?hub.mode=subscribe&hub.verify_token=V&hub_verify_token=V&hub.challenge=1"), "/api/instagram/webhook?hub.mode=subscribe&hub.verify_token=[gizli]&hub_verify_token=[gizli]&hub.challenge=1");
     assert.equal(http.redactUrl("/api/img?u=https%3A%2F%2Fa&s=SIG"), "/api/img?u=https%3A%2F%2Fa&s=[gizli]");
   });
 });

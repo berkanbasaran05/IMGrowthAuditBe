@@ -9,7 +9,7 @@ import type { NextFunction, Request, Response } from "express";
 export function redactUrl(url: string): string {
   return url
     .replace(/^\/r\/[A-Za-z0-9_-]+/, "/r/[gizli]")
-    .replace(/([?&](?:token|code|state|s|k|key|password)=)[^&]*/gi, "$1[gizli]");
+    .replace(/([?&](?:token|code|state|s|k|key|password|hub\.verify_token|hub_verify_token|access_token)=)[^&]*/gi, "$1[gizli]");
 }
 
 // Kullanıcıya gösterilecek hata mesajı: bilinçli (doğrulama) mesajlar aynen, veritabanı/çalışma zamanı hataları genel mesajla.

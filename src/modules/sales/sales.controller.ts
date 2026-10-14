@@ -1,3 +1,4 @@
+import { cardInputFromReport, renderCardPng } from "./report.card.js";
 import { Body, Controller, Get, Param, Patch, Post, Req, Res } from "@nestjs/common";
 import type { Request, Response } from "express";
 import { publicMessage } from "../../infrastructure/http/http-hardening.js";
@@ -121,6 +122,16 @@ export class PublicReportController {
     const report = await this.sales.resolve(token, true).catch(() => null);
     if (!report) return res.status(404).set(SECURITY_HEADERS).type("html").send(NOT_FOUND);
     res.set({ ...SECURITY_HEADERS, "Cache-Control": "private, no-store" }).type("html").send(renderReportHtml(report, { pdfHref: `/r/${token}/pdf` }));
+  }
+
+  // Instagram DM kartı için skor görseli. Erişim rapor bağlantısıyla aynı belirteçle; görüntülenme sayılmaz.
+  @Get(":token/card.png")
+  async card(@Param("token") token: string, @Req() req: Request, @Res() res: Response) {
+    if (rateLimited(clientIp(req))) return res.status(429).set(SECURITY_HEADERS).send("Çok fazla istek");
+    const report = await this.sales.resolve(token, false).catch(() => null);
+    if (!report) return res.status(404).set({ ...SECURITY_HEADERS, "Cache-Control": "no-store" }).send("Not found");
+    const png = await renderCardPng(cardInputFromReport(report));
+    res.set({ ...SECURITY_HEADERS, "Cache-Control": "public, max-age=86400", "X-Robots-Tag": "noindex" }).type("png").send(png);
   }
 
   @Get(":token/pdf")
