@@ -542,9 +542,25 @@ model IgConversation {
   messagesIn    Int       @default(0) @map("messages_in")
   handoffUntil  DateTime? @map("handoff_until") @db.Timestamptz(6)
   lastInboundAt DateTime? @map("last_inbound_at") @db.Timestamptz(6)
+  // Yorumdan gelen özel yanıt sonrası: kullanıcı yanıtlayana kadar başka mesaj gönderilemez (sonuç bekletilir).
+  replyGate     Boolean   @default(false) @map("reply_gate")
+  commentMedia  String?   @map("comment_media") @db.VarChar(64)
   createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt     DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   @@index([state, updatedAt], map: "ig_conversations_state_updated_idx")
   @@map("ig_conversations")
+}
+
+// Instagram yorum → DM olayları (yorum kimliği başına tek satır; tekrar gelen webhook işlenmez).
+model IgCommentEvent {
+  commentId String   @id @map("comment_id") @db.VarChar(64)
+  mediaId   String?  @map("media_id") @db.VarChar(64)
+  igsid     String   @db.VarChar(64)
+  username  String?  @db.VarChar(80)
+  action    String   @db.VarChar(32)
+  handledAt DateTime @default(now()) @map("handled_at") @db.Timestamptz(6)
+
+  @@index([igsid, handledAt], map: "ig_comment_events_igsid_idx")
+  @@map("ig_comment_events")
 }

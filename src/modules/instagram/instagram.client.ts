@@ -43,6 +43,16 @@ export class IgClient {
     return this.sendMessage(igsid, message);
   }
 
+  // Yorumdan özel yanıt (private reply): alıcı comment_id. Kullanıcı yanıtlayana kadar yalnızca 1 mesaj; yorumdan itibaren 7 gün.
+  // Belgede yalnızca message.text tanımlı; hızlı yanıt/şablon desteklenmediği için düz metin gönderilir.
+  privateReply(commentId: string, text: string) {
+    return this.post(this.msgPath(), { recipient: { comment_id: commentId }, message: { text } }, "Yorum özel yanıtı");
+  }
+  // Yorumun altına herkese açık yanıt.
+  replyComment(commentId: string, message: string) {
+    return this.post(`${encodeURIComponent(commentId)}/replies`, { message }, "Yorum yanıtı");
+  }
+
   // typing_on / typing_off / mark_seen. En iyi çaba: hata yutulur.
   async action(igsid: string, action: "typing_on" | "typing_off" | "mark_seen") {
     try { await this.post(this.msgPath(), { recipient: { id: igsid }, sender_action: action }, "Gönderen eylemi"); return true; }

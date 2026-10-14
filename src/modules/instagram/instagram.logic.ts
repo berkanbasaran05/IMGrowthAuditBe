@@ -196,3 +196,41 @@ export function stepsText(steps: string[]): string | null {
   if (!steps.length) return null;
   return splitMessage(["Öncelikli 3 adım:", ...steps.slice(0, 3).map((s, i) => `${i + 1}. ${s}`)].join("\n"))[0];
 }
+
+// ---- Yorumdan DM'e (private replies) ----
+// Instagram Login "comments" / "live_comments" webhook'u. Belgedeki biçim: entry[].field + entry[].value { id, from{id,username}, text, media{id,media_product_type} };
+// sahada entry[].changes[] { field, value { comment_id|id, parent_id, ... } } biçimi de gelir — ikisi de desteklenir. from.id IGSID'dir (Instagram-scoped).
+export const PRIVATE_REPLY_WINDOW_MS = 7 * 86_400_000;
+export const COMMENT_DAILY_LIMIT = 3;
+export interface IncomingComment { commentId: string; mediaId: string; productType: string; igsid: string; username: string; text: string; parentId: string | null; live: boolean; timestamp: number }
+export function parseComments(body: any, accountId: string, ownUsername = ""): IncomingComment[] {
+  if (!body || body.object !== "instagram" || !Array.isArray(body.entry)) return [];
+  const out: IncomingComment[] = [];
+  const own = ownUsername.replace(/^@/, "").toLowerCase();
+  for (const entry of body.entry) {
+    const changes = Array.isArray(entry?.changes) ? entry.changes : entry?.field ? [{ field: entry.field, value: entry.value }] : [];
+    for (const ch of changes) {
+      if (ch?.field !== "comments" && ch?.field !== "live_comments") continue;
+      const v = ch.value || {};
+      const commentId = String(v.comment_id || v.id || ""), igsid = String(v.from?.id || ""), username = typeof v.from?.username === "string" ? v.from.username.slice(0, 80) : "";
+      if (!commentId || !igsid || typeof v.text !== "string") continue;
+      if (igsid === accountId || igsid === String(entry?.id || "") || (own && username.toLowerCase() === own) || v.from?.self_ig_scoped_id) continue;
+      const ts = Number(entry.time) || Date.now();
+      out.push({ commentId, mediaId: String(v.media?.id || ""), productType: String(v.media?.media_product_type || ""), igsid, username, text: v.text.slice(0, 2200), parentId: v.parent_id ? String(v.parent_id) : null, live: ch.field === "live_comments", timestamp: ts < 1e12 ? ts * 1000 : ts });
+    }
+  }
+  return out;
+}
+
+// Tetikleyici: "analiz" kelimesi (ANALİZ, analiz yap, #analiz…) ya da yorumda alan adı / URL.
+export function commentTrigger(text: string): { trigger: boolean; url: URL | null } {
+  const url = extractUrl(text);
+  return { trigger: !!url || /(^|[^a-z0-9])analiz/.test(fold(text)), url };
+}
+
+export const PUBLIC_REPLIES = ["DM'den yazdık 📩", "Mesajlarınızı kontrol edin, analiz linki gönderildi 📩", "Gönderdik, DM'e bakabilirsiniz 🔎"];
+export const publicReplyFor = (commentId: string) => PUBLIC_REPLIES[[...commentId].reduce((a, c) => a + c.charCodeAt(0), 0) % PUBLIC_REPLIES.length];
+export const COMMENT_COPY = {
+  askUrl: "Merhaba 👋 Yorumunuz için teşekkürler. Sitenizi ücretsiz analiz edelim: web sitenizin adresini buraya yazmanız yeterli (ör. ornekfirma.com).",
+  started: (domain: string) => `🔎 ${domain} analiz ediliyor. Sonucu görmek için bu mesaja herhangi bir yanıt yazın (ör. 'tamam').`,
+};

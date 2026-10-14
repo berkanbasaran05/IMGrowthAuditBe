@@ -198,7 +198,8 @@ describe("Graph istemcisi", () => {
 
 // Bellek içi sahte Prisma ile servis akışı (ağ yok; gönderimler kaydedilir).
 function fakeService({ pollResult, failTemplates = 0 } = {}) {
-  const kv = new Map(), convs = new Map(), sent = [], submits = [];
+  const kv = new Map(), convs = new Map(), events = new Map(), sent = [], submits = [];
+  const match = (e, w) => Object.entries(w).every(([k, v]) => v && typeof v === "object" ? ("in" in v ? v.in.includes(e[k]) : e[k] >= v.gte) : e[k] === v);
   const prisma = {
     keyValue: {
       findUnique: async ({ where }) => kv.get(where.key) ?? null,
@@ -206,12 +207,18 @@ function fakeService({ pollResult, failTemplates = 0 } = {}) {
       upsert: async ({ where, create, update }) => kv.set(where.key, kv.has(where.key) ? { ...kv.get(where.key), ...update } : create),
       deleteMany: async ({ where }) => { kv.delete(where.key); return { count: 1 }; },
     },
+    igCommentEvent: {
+      findUnique: async ({ where }) => events.get(where.commentId) ?? null,
+      create: async ({ data }) => { if (events.has(data.commentId)) throw Object.assign(new Error("dup"), { code: "P2002" }); const e = { handledAt: new Date(), ...data }; events.set(data.commentId, e); return e; },
+      update: async ({ where, data }) => Object.assign(events.get(where.commentId), data),
+      count: async ({ where }) => [...events.values()].filter((e) => match(e, where)).length,
+    },
     igConversation: {
       findUnique: async ({ where }) => convs.get(where.igsid) ?? null,
       create: async ({ data }) => { const c = { state: "idle", auditsToday: 0, auditsTotal: 0, messagesIn: 0, updatedAt: new Date(), ...data }; convs.set(data.igsid, c); return c; },
       update: async ({ where, data }) => { const c = convs.get(where.igsid); for (const [k, v] of Object.entries(data)) c[k] = v && typeof v === "object" && "increment" in v ? (c[k] || 0) + v.increment : v; if (!("updatedAt" in data)) c.updatedAt = new Date(); return c; },
-      updateMany: async ({ where, data }) => { let count = 0; for (const c of convs.values()) if ((!where.igsid || c.igsid === where.igsid) && c.state === where.state && (!where.updatedAt || c.updatedAt < where.updatedAt.lt)) { Object.assign(c, data); count++; } return { count }; },
-      findMany: async ({ where }) => [...convs.values()].filter((c) => c.state === where.state),
+      updateMany: async ({ where, data }) => { let count = 0; for (const c of convs.values()) if ((!where.igsid || c.igsid === where.igsid) && c.state === where.state && (where.replyGate === undefined || !!c.replyGate === where.replyGate) && (!where.updatedAt || c.updatedAt < where.updatedAt.lt)) { Object.assign(c, data); count++; } return { count }; },
+      findMany: async ({ where }) => [...convs.values()].filter((c) => c.state === where.state && (where.replyGate === undefined || !!c.replyGate === where.replyGate)),
     },
   };
   const publicAudits = {
@@ -226,8 +233,10 @@ function fakeService({ pollResult, failTemplates = 0 } = {}) {
     sendMessage: async (id, message) => { if (fails-- > 0) throw new Error("template"); sent.push({ id, message }); },
     action: async (id, a) => { sent.push({ id, action: a }); return true; },
     profile: async () => ({ username: "ornekfirma" }),
+    privateReply: async (commentId, text) => { sent.push({ commentId, text, private: true }); },
+    replyComment: async (commentId, message) => { sent.push({ commentId, message, public: true }); },
   };
-  return { svc, sent: Object.assign(sent, {}), submits, convs, msgs: () => sent.filter((x) => !x.action) };
+  return { svc, sent: Object.assign(sent, {}), submits, convs, events, msgs: () => sent.filter((x) => !x.action) };
 }
 const msg = (text, mid = "mid-" + Math.random(), quickReply = null) => ({ igsid: "555", mid, text, quickReply, timestamp: 1 });
 
@@ -309,6 +318,98 @@ describe("Servis akışı", () => {
     await svc.pollPending();
     assert.match(msgs().at(-1).text, /ulaşamadık/);
     assert.equal(convs.get("555").state, "idle");
+  });
+});
+
+const cbody = (text, over = {}, fmt = "changes") => {
+  const value = { from: { id: "777", username: "musteri" }, comment_id: over.id || "c-" + Math.random(), text, media: { id: over.media || "M1", media_product_type: "REELS" }, ...(over.parent ? { parent_id: over.parent } : {}) };
+  if (over.from) value.from = over.from;
+  return fmt === "changes" ? { object: "instagram", entry: [{ id: "1784", time: Date.now(), changes: [{ field: over.field || "comments", value }] }] }
+    : { object: "instagram", entry: [{ id: "1784", time: Date.now(), field: "comments", value: { ...value, id: value.comment_id, comment_id: undefined } }] };
+};
+const cm = (text, over) => L.parseComments(cbody(text, over), "1784", "istanbul.marketing")[0];
+
+describe("Yorumdan DM", () => {
+  it("tetikleyici: analiz (harf/aksan bağımsız), analiz yap, alan adı; diğerleri değil", () => {
+    for (const t of ["analiz", "ANALİZ", "Analiz yap 🙏", "ANALIZ", "#analiz", "sitemiz ornek.com.tr bakar mısınız"]) assert.equal(L.commentTrigger(t).trigger, true, t);
+    for (const t of ["harika video", "analitik", "@ornek"]) assert.equal(L.commentTrigger(t).trigger, false, t);
+    assert.equal(L.commentTrigger("bakar mısınız ornek.com").url.hostname, "ornek.com");
+  });
+  it("ayrıştırma: iki biçim, kendi yorumumuz (id/kullanıcı adı) atlanır", () => {
+    assert.equal(cm("analiz").igsid, "777");
+    const flat = L.parseComments(cbody("analiz", { id: "c9" }, "flat"), "1784")[0];
+    assert.deepEqual([flat.commentId, flat.mediaId], ["c9", "M1"]);
+    assert.equal(cm("analiz", { from: { id: "1784", username: "x" } }), undefined);
+    assert.equal(cm("analiz", { from: { id: "9", username: "Istanbul.Marketing" } }), undefined);
+    assert.equal(cm("analiz", { field: "live_comments" }).live, true);
+    assert.equal(L.parseWebhook(cbody("analiz"), "1784").length, 0); // DM ayrıştırıcısı yorumları almaz
+  });
+  it("analiz → özel yanıt (comment_id, düz metin) + herkese açık yanıt; tekrar ve tetikleyicisiz yorum yok sayılır", async () => {
+    const { svc, sent, convs, events } = fakeService();
+    assert.equal(await svc.handleComment(cm("güzel paylaşım")), "ignored");
+    const c = cm("ANALİZ", { id: "c1" });
+    assert.equal(await svc.handleComment(c), "private_reply");
+    assert.equal(await svc.handleComment(c), "duplicate");
+    const priv = sent.filter((x) => x.private);
+    assert.equal(priv.length, 1); assert.equal(priv[0].commentId, "c1"); assert.equal(priv[0].text, L.COMMENT_COPY.askUrl);
+    assert.ok(L.PUBLIC_REPLIES.includes(sent.find((x) => x.public).message));
+    assert.equal(convs.get("777").state, "awaiting_url"); assert.equal(convs.get("777").commentMedia, "M1");
+    assert.equal(events.get("c1").action, "private_reply");
+    // bizim yanıtladığımız yoruma gelen yanıt
+    assert.equal(await svc.handleComment(cm("analiz linki gelmedi", { parent: "c1" })), "ignored");
+  });
+  it("istemci: özel yanıt gövdesi { recipient: { comment_id }, message: { text } }, yanıt /{id}/replies", async () => {
+    const calls = [];
+    const c = new IgClient({ ...ENV, accountId: "1784", accessToken: "tok", version: "v25.0" }, null, async (url, init) => { calls.push({ url, body: JSON.parse(init.body) }); return { ok: true, status: 200, json: async () => ({}) }; });
+    await c.privateReply("c1", "selam"); await c.replyComment("c1", "DM'den yazdık 📩");
+    assert.equal(calls[0].url, "https://graph.instagram.com/v25.0/1784/messages");
+    assert.deepEqual(calls[0].body, { recipient: { comment_id: "c1" }, message: { text: "selam" } });
+    assert.equal(calls[1].url, "https://graph.instagram.com/v25.0/c1/replies");
+    assert.deepEqual(calls[1].body, { message: "DM'den yazdık 📩" });
+  });
+  it("IG_COMMENT_PUBLIC_REPLY=0 herkese açık yanıtı kapatır; canlı yorumda herkese açık yanıt yok", async () => {
+    const { svc, sent } = fakeService();
+    process.env.IG_COMMENT_PUBLIC_REPLY = "0";
+    await svc.handleComment(cm("analiz"));
+    delete process.env.IG_COMMENT_PUBLIC_REPLY;
+    await svc.handleComment(cm("analiz", { field: "live_comments", media: "M2" }));
+    assert.equal(sent.filter((x) => x.public).length, 0); assert.equal(sent.filter((x) => x.private).length, 2);
+  });
+  it("sınırlar: gönderi başına 1, günde 3; 7 günden eski yorum yanıtlanmaz", async () => {
+    const { svc } = fakeService();
+    assert.equal(await svc.handleComment(cm("analiz", { media: "A" })), "private_reply");
+    assert.equal(await svc.handleComment(cm("analiz", { media: "A" })), "limited_post");
+    assert.equal(await svc.handleComment(cm("analiz", { media: "B" })), "private_reply");
+    assert.equal(await svc.handleComment(cm("analiz", { media: "C" })), "private_reply");
+    assert.equal(await svc.handleComment(cm("analiz", { media: "D" })), "limited_day");
+    const old = { ...cm("analiz", { media: "E" }), timestamp: Date.now() - 8 * 86_400_000 };
+    assert.equal(await svc.handleComment(old), "expired");
+  });
+  it("yorumda alan adı: tek mesaj + analiz; sonuç kullanıcı yanıtlayınca gönderilir", async () => {
+    let ready = false;
+    const done = { status: "completed", result: { overallScore: 71, grade: "İyi", topOpportunities: [{ title: "A" }], reportUrl: "https://x/r/t" } };
+    const { svc, sent, submits, convs } = fakeService({ pollResult: () => (ready ? done : { status: "processing", progress: 80 }) });
+    assert.equal(await svc.handleComment(cm("ornek.com analiz", { id: "c5" })), "audit_started");
+    assert.equal(submits[0].input.message, "Yorum: M1 (IGSID 777)"); assert.equal(submits[0].opts.notify, false);
+    assert.deepEqual(sent.filter((x) => x.private).map((x) => x.text), [L.COMMENT_COPY.started("ornek.com")]);
+    assert.equal(convs.get("777").replyGate, true);
+    ready = true;
+    await svc.pollPending(); // kapı kapalı: hiçbir şey gönderilmez
+    assert.equal(sent.filter((x) => x.id === "777").length, 0);
+    await svc.handleMessage({ igsid: "777", mid: "r1", text: "tamam", quickReply: null, timestamp: 1 });
+    const out = sent.filter((x) => x.id === "777" && !x.action);
+    assert.equal(out[0].message.attachment.payload.template_type, "generic");
+    assert.equal(convs.get("777").state, "result_sent"); assert.equal(convs.get("777").replyGate, false);
+  });
+  it("yanıt geldiğinde analiz sürüyorsa durum mesajı, sonra yoklayıcı gönderir", async () => {
+    let ready = false;
+    const done = { status: "completed", result: { overallScore: 50, grade: "Zayıf", topOpportunities: [], reportUrl: "https://x/r/t" } };
+    const { svc, sent, convs } = fakeService({ pollResult: () => (ready ? done : { status: "processing", progress: 10 }) });
+    await svc.handleComment(cm("ornek.com"));
+    await svc.handleMessage({ igsid: "777", mid: "r2", text: "tamam", quickReply: null, timestamp: 1 });
+    assert.equal(sent.filter((x) => x.id === "777" && !x.action).at(-1).text, L.COPY.busy);
+    ready = true; await svc.pollPending();
+    assert.equal(convs.get("777").state, "result_sent");
   });
 });
 

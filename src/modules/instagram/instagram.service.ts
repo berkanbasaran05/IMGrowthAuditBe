@@ -5,7 +5,8 @@ import { getOne, put } from "../growth/lib/redis.js";
 import { decryptSecret, encryptionConfigured, encryptSecret } from "../growth-manager/security.js";
 import { PublicAuditError, PublicAuditService, domainOf } from "../audit/public-audit.service.js";
 import { IgClient, type TokenStore } from "./instagram.client.js";
-import { ABOUT_QUICK, COPY, HANDOFF_MS, RESULT_QUICK, auditsUsedToday, dayKey, decide, progressLevel, resultCard, stepsText, parseWebhook, type IncomingMessage } from "./instagram.logic.js";
+import { ABOUT_QUICK, COPY, HANDOFF_MS, RESULT_QUICK, auditsUsedToday, dayKey, decide, progressLevel, resultCard, stepsText, parseWebhook, type IncomingMessage,
+  COMMENT_COPY, COMMENT_DAILY_LIMIT, DAILY_AUDIT_LIMIT, PRIVATE_REPLY_WINDOW_MS, commentTrigger, parseComments, publicReplyFor, type IncomingComment } from "./instagram.logic.js";
 
 // Instagram DM analiz botu. Durum ig_conversations tablosunda tutulur; bekleyen analizler 15 sn'de bir
 // yoklanır (sunucu yeniden başlasa da sonuç gönderilir). Ekibe Telegram/e-posta bildirimi GÖNDERİLMEZ:
@@ -77,6 +78,10 @@ export class InstagramService implements OnModuleInit, OnModuleDestroy {
       try { await this.handleMessage(msg); }
       catch (e: any) { this.log.warn(`DM işlenemedi: ${e.message}`); }
     }
+    for (const c of parseComments(body, this.client.cfg.accountId, process.env.IG_ACCOUNT_USERNAME || "")) {
+      try { await this.handleComment(c); }
+      catch (e: any) { this.log.warn(`Yorum işlenemedi: ${e.message}`); }
+    }
   }
 
   // Aynı mesaj kimliği (mid) ikinci kez işlenmez (Meta yeniden deneyebilir).
@@ -114,6 +119,15 @@ export class InstagramService implements OnModuleInit, OnModuleDestroy {
       conv = await this.prisma.igConversation.create({ data: { igsid: msg.igsid, username: p?.username || null } });
     }
     await this.prisma.igConversation.update({ where: { igsid: msg.igsid }, data: { lastMid: msg.mid, lastInboundAt: now, messagesIn: { increment: 1 } } });
+    // Yorumdan özel yanıt sonrası ilk yanıt: kapı açılır; analiz sürüyorsa sonuç hazırsa hemen, değilse durum mesajı.
+    if ((conv as any).replyGate) {
+      await this.prisma.igConversation.update({ where: { igsid: msg.igsid }, data: { replyGate: false } });
+      if (conv.state === "auditing") {
+        const delivered = await this.deliver({ ...conv, replyGate: false } as any, now, true);
+        if (!delivered) await this.send(msg.igsid, [COPY.busy]);
+        return;
+      }
+    }
     const action = decide(conv as any, msg, now);
     const set = (data: Record<string, any>) => this.prisma.igConversation.update({ where: { igsid: msg.igsid }, data });
 
@@ -137,7 +151,7 @@ export class InstagramService implements OnModuleInit, OnModuleDestroy {
         try {
           started = await this.publicAudits.submit({
             websiteUrl: action.url.toString(), name: "", email: "", phone: "", company: "", sector: "",
-            instagram: conv.username || "", message: `Instagram DM (IGSID ${msg.igsid})`, source: "instagram", locale: "tr",
+            instagram: conv.username || "", message: (conv as any).commentMedia ? `Yorum: ${(conv as any).commentMedia} (IGSID ${msg.igsid})` : `Instagram DM (IGSID ${msg.igsid})`, source: "instagram", locale: "tr",
           }, `ig:${msg.igsid}`, { notify: false, createdBy: "instagram-bot" });
         } catch (e) {
           if (e instanceof PublicAuditError) { await set({ state: "awaiting_url" }); return this.send(msg.igsid, [COPY.invalidUrl]); }
@@ -153,6 +167,60 @@ export class InstagramService implements OnModuleInit, OnModuleDestroy {
         return this.send(msg.igsid, [COPY.started(domain)]);
       }
     }
+  }
+
+  // Yorum → özel yanıt DM + (isteğe bağlı) herkese açık yanıt. Yorum kimliği başına bir kez (ig_comment_events).
+  async handleComment(c: IncomingComment, now = new Date()) {
+    const { trigger, url } = commentTrigger(c.text);
+    if (!trigger) return "ignored";
+    if (now.getTime() - c.timestamp > PRIVATE_REPLY_WINDOW_MS) return "expired";
+    // Bizim yanıtladığımız bir yoruma gelen yanıtlar (ör. "teşekkürler, analiz…") yeniden tetiklemez.
+    if (c.parentId && (await this.prisma.igCommentEvent.findUnique({ where: { commentId: c.parentId } }))) return "ignored";
+    const ev = this.prisma.igCommentEvent;
+    try { await ev.create({ data: { commentId: c.commentId, mediaId: c.mediaId || null, igsid: c.igsid, username: c.username || null, action: "processing" } }); }
+    catch (e: any) { if (e?.code === "P2002") return "duplicate"; throw e; }
+    const done = (action: string) => ev.update({ where: { commentId: c.commentId }, data: { action } }).then(() => action);
+
+    const replied = { igsid: c.igsid, action: { in: ["private_reply", "audit_started"] } };
+    const dayStart = new Date(Date.parse(`${dayKey(now)}T00:00:00+03:00`));
+    if (c.mediaId && (await ev.count({ where: { ...replied, mediaId: c.mediaId } })) >= 1) return done("limited_post");
+    if ((await ev.count({ where: { ...replied, handledAt: { gte: dayStart } } })) >= COMMENT_DAILY_LIMIT) return done("limited_day");
+
+    let conv = await this.prisma.igConversation.findUnique({ where: { igsid: c.igsid } });
+    if (conv && (conv.state === "auditing" || conv.state === "sending")) return done("busy");
+    if (!conv) conv = await this.prisma.igConversation.create({ data: { igsid: c.igsid, username: c.username || null } });
+    const media = (c.mediaId || "").slice(0, 64) || null;
+
+    let action = "private_reply";
+    if (url && auditsUsedToday(conv as any, now) < DAILY_AUDIT_LIMIT) {
+      const domain = domainOf(url.toString()) || url.hostname;
+      try {
+        const started = await this.publicAudits.submit({
+          websiteUrl: url.toString(), name: "", email: "", phone: "", company: "", sector: "",
+          instagram: c.username || conv.username || "", message: `Yorum: ${media || "?"} (IGSID ${c.igsid})`, source: "instagram", locale: "tr",
+        }, `ig:${c.igsid}`, { notify: false, createdBy: "instagram-bot" });
+        await this.client!.privateReply(c.commentId, COMMENT_COPY.started(domain));
+        await this.prisma.igConversation.update({ where: { igsid: c.igsid }, data: {
+          state: "auditing", domain, leadId: started.leadId, auditId: started.auditId ?? null, publicToken: started.token, handoffUntil: null,
+          replyGate: true, commentMedia: media, auditsDay: dayKey(now), auditsToday: auditsUsedToday(conv as any, now) + 1, auditsTotal: { increment: 1 },
+        } });
+        await this.tagLead(started.leadId, c.igsid, c.username || conv.username).catch(() => {});
+        await this.prisma.keyValue.deleteMany({ where: { key: progressKey(c.igsid) } }).catch(() => {});
+        action = "audit_started";
+      } catch (e) {
+        if (!(e instanceof PublicAuditError)) throw e;
+        action = "private_reply"; // geçersiz adres: adres iste
+      }
+    }
+    if (action === "private_reply") {
+      await this.client!.privateReply(c.commentId, COMMENT_COPY.askUrl);
+      await this.prisma.igConversation.update({ where: { igsid: c.igsid }, data: { state: "awaiting_url", handoffUntil: null, replyGate: false, commentMedia: media } });
+    }
+    await done(action);
+    if (!c.live && process.env.IG_COMMENT_PUBLIC_REPLY !== "0") {
+      await this.client!.replyComment(c.commentId, publicReplyFor(c.commentId)).catch((e) => this.log.warn(`Yorum yanıtı gönderilemedi: ${e.message}`));
+    }
+    return action;
   }
 
   private async tagLead(leadId: string, igsid: string, username: string | null) {
@@ -173,17 +241,18 @@ export class InstagramService implements OnModuleInit, OnModuleDestroy {
     this.polling = true;
     try {
       await this.prisma.igConversation.updateMany({ where: { state: "sending", updatedAt: { lt: new Date(now.getTime() - SENDING_STALE_MS) } }, data: { state: "auditing" } });
-      const pending = await this.prisma.igConversation.findMany({ where: { state: "auditing" }, orderBy: { updatedAt: "asc" }, take: 20 });
+      const pending = await this.prisma.igConversation.findMany({ where: { state: "auditing", replyGate: false }, orderBy: { updatedAt: "asc" }, take: 20 });
       for (const c of pending) await this.deliver(c, now).catch((e) => this.log.warn(`Sonuç gönderilemedi: ${e.message}`));
     } finally { this.polling = false; }
   }
 
-  private async deliver(c: { igsid: string; publicToken: string | null; domain: string | null; updatedAt: Date }, now: Date) {
+  // true: sonuç/hata mesajı gönderildi. onReply: kullanıcı yeni yanıtladı (işlemde ise ara mesaj yerine false döner).
+  private async deliver(c: { igsid: string; publicToken: string | null; domain: string | null; updatedAt: Date }, now: Date, onReply = false): Promise<boolean> {
     const domain = c.domain || "Siteniz";
     const out: any = c.publicToken ? await this.publicAudits.poll(c.publicToken, reportBase()) : null;
     let texts: string[] = [], quick: object[] | undefined, next = "idle", score: number | null = null, card: ReturnType<typeof resultCard> | null = null;
     if (out?.status === "processing") {
-      if (now.getTime() - c.updatedAt.getTime() < AUDIT_GIVEUP_MS) return this.maybeProgress(c.igsid, out.progress);
+      if (now.getTime() - c.updatedAt.getTime() < AUDIT_GIVEUP_MS) { if (!onReply) await this.maybeProgress(c.igsid, out.progress); return false; }
       texts = [COPY.failed(domain)];
     } else if (out?.status === "completed") {
       const r = out.result;
@@ -197,11 +266,12 @@ export class InstagramService implements OnModuleInit, OnModuleDestroy {
     else texts = [COPY.failed(domain)];
 
     const claimed = await this.prisma.igConversation.updateMany({ where: { igsid: c.igsid, state: "auditing" }, data: { state: "sending" } });
-    if (claimed.count !== 1) return;
+    if (claimed.count !== 1) return false;
     try {
       if (card) await this.sendCard(c.igsid, card);
       await this.send(c.igsid, texts, quick);
       await this.prisma.igConversation.update({ where: { igsid: c.igsid }, data: { state: next, publicToken: null, lastScore: score } });
+      return true;
     } catch (e) {
       // 24 saatlik pencere dışına çıkıldıysa vazgeç; aksi halde sonraki turda yeniden dene.
       const giveUp = now.getTime() - c.updatedAt.getTime() > 23 * 3_600_000;
