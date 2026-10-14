@@ -507,3 +507,20 @@ model PaymentTransaction {
   @@index([paymentId, createdAt(sort: Desc)], map: "payment_transactions_payment_created_idx")
   @@map("payment_transactions")
 }
+
+// Ücretsiz dijital analiz talepleri (herkese açık form). audit_id/report_id bilinçli olarak ilişkisizdir:
+// denetim veya rapor bağlantısı silinse de talep kaydı kalır.
+model PublicAuditRequest {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tokenHash String   @unique @map("token_hash") @db.Char(64)
+  leadId    String   @map("lead_id") @db.VarChar(120)
+  auditId   String?  @map("audit_id") @db.Uuid
+  reportId  String?  @map("report_id") @db.Uuid
+  source    String   @db.VarChar(20)
+  locale    String   @default("tr") @db.VarChar(5)
+  ipHash    String?  @map("ip_hash") @db.Char(64)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([leadId, createdAt(sort: Desc)], map: "public_audit_requests_lead_created_idx")
+  @@map("public_audit_requests")
+}

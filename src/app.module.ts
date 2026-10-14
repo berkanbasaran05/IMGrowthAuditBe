@@ -8,6 +8,8 @@ import { PrismaService } from "./infrastructure/prisma/prisma.service.js";
 import { AuditController } from "./modules/audit/audit.controller.js";
 import { AuditQueue } from "./modules/audit/audit.queue.js";
 import { AuditService } from "./modules/audit/audit.service.js";
+import { PublicAuditController } from "./modules/audit/public-audit.controller.js";
+import { PublicAuditService } from "./modules/audit/public-audit.service.js";
 import { PublicReportController, SalesController } from "./modules/sales/sales.controller.js";
 import { SalesService } from "./modules/sales/sales.service.js";
 import { GrowthManagerAdminController, OAuthController, PortalController } from "./modules/growth-manager/growth-manager.controller.js";
@@ -22,7 +24,7 @@ import { PaymentsService } from "./modules/payments/payments.service.js";
 
 @Module({
   // AuditController, "api/:endpoint" yakalayıcısını içeren GrowthController'dan önce kaydedilir.
-  controllers: [HealthController, CrmController, AuditController, SalesController, PublicReportController, GrowthManagerAdminController, PortalBillingController, PortalController, OAuthController, GeoController, OpsController, PaymentsAdminController, PaymentLinkController, GrowthController],
-  providers: [PrismaService, DatabaseService, CrmService, AuditService, AuditQueue, SalesService, GrowthManagerService, GrowthManagerScheduler, GeoService, RetentionService, OpsService, PaymentsService],
+  controllers: [HealthController, CrmController, AuditController, PublicAuditController, SalesController, PublicReportController, GrowthManagerAdminController, PortalBillingController, PortalController, OAuthController, GeoController, OpsController, PaymentsAdminController, PaymentLinkController, GrowthController],
+  providers: [PrismaService, DatabaseService, CrmService, AuditService, PublicAuditService, AuditQueue, SalesService, GrowthManagerService, GrowthManagerScheduler, GeoService, RetentionService, OpsService, PaymentsService],
 })
 export class AppModule {}

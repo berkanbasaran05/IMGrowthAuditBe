@@ -11,6 +11,7 @@ export async function addEvent(type, data = {}) {
       demo_view: `👀 ${data.name} sunumu açtı`,
       booking: `📅 Yeni görüşme talebi: ${data.business || data.name} (${data.phone || ""})`,
       ads_form: `📝 ${data.name} Google Ads başlangıç formunu doldurdu`,
+      inbound_audit: `📥 ${data.text || data.name}`,
     }[type] || `${type}: ${data.name || ""}`;
     await fetch(`https://api.telegram.org/bot${tok}/sendMessage`, {
       method: "POST", headers: { "Content-Type": "application/json" },

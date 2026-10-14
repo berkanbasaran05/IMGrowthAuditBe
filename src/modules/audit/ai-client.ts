@@ -4,8 +4,13 @@ import type { z } from "zod";
 // Yapılandırılmış (JSON şemalı) Claude çağrısı. Tüm AI özellikleri (denetim analisti, e-posta taslağı,
 // arama brifi) bu yardımcıyı kullanır: şema kısıtı + zod doğrulaması, ret/kesilme yönetimi, maliyet kaydı.
 
-export const AI_MODEL = process.env.AUDIT_AI_MODEL || "claude-opus-5-5";
-const PRICE = { input: Number(process.env.AUDIT_AI_PRICE_IN || 4), output: Number(process.env.AUDIT_AI_PRICE_OUT || 20) }; // USD / 1M token
+// Varsayılan model Claude Haiku 5.5 (hızlı ve düşük maliyetli; 100K token altı istemlerde $0,10 / $0,50 / 1M token).
+// Haiku 5.5: düşünme uyarlamalı ve varsayılan açık (budget_tokens 400 döner), effort varsayılanı "medium",
+// temperature/top_p/top_k gönderilmez. Sunucu tarafı ret yedeği (fallbacks) Haiku 5.5'te yoktur; yalnızca
+// destekleyen modellerde (Opus/Sonnet/Fable) gönderilir.
+export const AI_MODEL = process.env.AUDIT_AI_MODEL || "claude-haiku-5-5";
+const PRICE = { input: Number(process.env.AUDIT_AI_PRICE_IN || 0.1), output: Number(process.env.AUDIT_AI_PRICE_OUT || 0.5) }; // USD / 1M token
+export const supportsServerFallback = (model: string) => /^claude-(opus|sonnet|fable)-/.test(model);
 
 export const aiConfigured = () => process.env.AUDIT_AI_DISABLED !== "1" && !!(process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN);
 
@@ -21,11 +26,11 @@ export async function structuredCall<T>(req: {
 }): Promise<AiResult<T>> {
   const client = new Anthropic({ timeout: 180_000, maxRetries: 2 });
   try {
+    const fallback = supportsServerFallback(AI_MODEL) ? { betas: ["server-side-fallback-2026-07-01"], fallbacks: "default" as const } : {};
     const response = await client.beta.messages.create({
       model: AI_MODEL,
       max_tokens: req.maxTokens ?? 16_000,
-      betas: ["server-side-fallback-2026-07-01"],
-      fallbacks: "default",
+      ...fallback,
       system: req.system,
       output_config: { effort: req.effort ?? "medium", format: { type: "json_schema", schema: req.schema } },
       messages: [{ role: "user", content: req.user }],

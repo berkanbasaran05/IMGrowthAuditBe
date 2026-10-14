@@ -39,7 +39,7 @@ Rol tabanlı yetki ve kiracı yalıtımı, müşteri portalı, entegrasyon OAuth
 - Web sitesi yoksa ya da doğrulanamıyorsa durum `no_verified_website` olur; puan `null` kalır.
 
 ### AI Analisti (analyst-1.0)
-- Model: `claude-opus-5-5` (`AUDIT_AI_MODEL` ile değiştirilebilir). Reddedilen isteklerde sunucu tarafı yedek model kullanılır (`fallbacks: "default"`).
+- Model: `claude-haiku-5-5` (Claude Haiku 5.5; `AUDIT_AI_MODEL` ile değiştirilebilir). Fiyat 100K token altı istemde $0,10 giriş / $0,50 çıkış (1M token başına; `AUDIT_AI_PRICE_IN/OUT`). Haiku 5.5'te düşünme uyarlamalıdır, `effort` varsayılanı `medium`'dur, örnekleme parametreleri gönderilmez. Sunucu tarafı ret yedeği (`fallbacks: "default"`) Haiku'da yoktur; yalnızca Opus/Sonnet/Fable seçilirse gönderilir.
 - Yalnızca taranan sayfalardan çıkarılmış yapılandırılmış veri gönderilir; ham HTML gönderilmez. Site içeriği `<website_content>` içinde güvenilmeyen veri olarak işaretlenir.
 - Çıktı JSON şemasıyla sınırlanır ve zod ile yeniden doğrulanır. Kanıtı taranan bir URL'ye dayanmayan değerlendirme `FAILED` sayılır. Güven en fazla 0,9 olabilir.
 - Teknik ölçümler AI'ya sorulmaz.
@@ -243,3 +243,19 @@ Migration: `prisma/migrations/20261013120000_sales_intelligence`.
 - Müşteri CRM'i, e-ticaret ve sipariş verisi bağlantıları yok; "takip edilmeyen nitelikli talep" dedektörü bu verilere bağlıdır.
 - Portalda kullanıcının parolasını kendi sıfırlaması yok; yönetim panelinden yeniden davet edilir.
 - Hız sınırı bellek içidir; çok sunucuda ağ geçidinde uygulanmalıdır.
+
+## Ücretsiz dijital analiz (herkese açık form)
+
+Pazarlama sitesi ve Instagram trafiği için oturumsuz uçlar (`src/modules/audit/public-audit.*`). Next.js `/api/*` isteklerini backend'e yönlendirdiği için site, panel alan adındaki `/api/public/audit` adresini çağırır.
+
+| Yöntem | Yol | Açıklama |
+|---|---|---|
+| POST | `/api/public/audit` | `{ websiteUrl, name, email?, phone?, company?, sector?, instagram?, message?, source: "web"\|"instagram", locale: "tr"\|"en", website_hp: "", consent: true }` → `202 { token }`. Hatalar `400 { error, code }` (`invalid_url`, `unreachable_url`, `name_required`, `contact_required`, `invalid_email`, `invalid_phone`, `consent_required`, `spam`), `413`, `429`. |
+| GET | `/api/public/audit/:token` | `{ status: "processing", progress, stage }` · `{ status: "completed", progress: 100, result: { overallScore, categories: [{ key, label, score }], summary, topOpportunities: [{ title, why, recommendedService }] (en fazla 3), reportUrl } }` · `{ status: "no_website" \| "failed", message }` · bilinmeyen belirteç `404`. |
+
+- Aynı alan adına sahip firma varsa kayıt yeniden kullanılır (ekibin alanları ezilmez, `inboundHistory`'ye eklenir); yoksa `status: "yeni"` ile yeni kayıt açılır. Alanlar: `inbound`, `inboundSource`, `inboundAt`, `inboundMessage`, `inboundLocale`, `contactName`.
+- Aktif denetim varsa o kullanılır. Sorgu belirteci 256 bittir, yalnızca SHA-256 özeti `public_audit_requests` tablosunda tutulur. Denetim bitince 90 gün geçerli müşteri raporu bağlantısı (`/r/:token`) bir kez oluşturulur; rapor belirteci sorgu belirtecinden HMAC ile türetildiği için saklanmaz.
+- Hız sınırı (bellek içi): IP başına saatte 5 başlatma, dakikada 60 sorgu. Gövde en fazla 8 KB. CORS yalnızca `PUBLIC_AUDIT_ORIGINS` kökenlerine açılır.
+- Bildirim: Telegram (`TELEGRAM_BOT_TOKEN`/`TELEGRAM_CHAT_ID`) ve `LEAD_NOTIFY_EMAIL` (SMTP gerekir). Bildirim hatası isteği bozmaz.
+- Panel: **Gelen Talepler** sekmesi (`#gelen`) — kaynak filtresi, Growth Score/audit durumu, tel/WhatsApp/e-posta bağlantıları, "İletişime geçildi" (aşama → İletişimde).
+- Migration: `prisma/migrations/20261014100000_public_audit`.
