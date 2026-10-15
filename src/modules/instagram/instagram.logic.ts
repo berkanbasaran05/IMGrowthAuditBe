@@ -109,6 +109,8 @@ export function decide(conv: ConvLike | null, msg: { text: string; quickReply?: 
   if (state === "handoff" && conv?.handoffUntil && conv.handoffUntil > now && intent !== "analyze") return { kind: "silent" };
   if (state === "auditing" || state === "sending") return intent === "analyze" || intent === "url" ? { kind: "busy" } : { kind: "silent" };
   if (intent === "url") {
+    // Site adresi yalnızca "ANALİZ" sonrası (ya da aynı mesajda "analiz" geçiyorsa) analiz başlatır; tek başına link yanıtlanmaz.
+    if (state !== "awaiting_url" && !/(^|[^a-z0-9])analiz/.test(fold(msg.text))) return { kind: "silent" };
     if (conv && auditsUsedToday(conv, now) >= DAILY_AUDIT_LIMIT) return { kind: "rate_limited" };
     return { kind: "start_audit", url: extractUrl(msg.text)! };
   }
@@ -117,9 +119,8 @@ export function decide(conv: ConvLike | null, msg: { text: string; quickReply?: 
   // "Ücretsiz görüşme" butonu / buzkıran her durumda; yazılı "evet" yalnızca sonuçtan sonra.
   if (msg.quickReply === PAYLOAD.talk || (state === "result_sent" && intent === "yes")) return { kind: "yes" };
   if (state === "result_sent" && intent === "no") return { kind: "no" };
-  // Tanıtım/yönlendirme mesajı sohbet başına bir kez gider; sonraki serbest mesajlar ekibe kalır (bot susar).
-  if (state === "helped" || state === "awaiting_url" || state === "result_sent") return { kind: "silent" };
-  return { kind: "help" };
+  // Bot yalnızca "ANALİZ" (veya analiz butonları) ile devreye girer; diğer tüm mesajlar ekibe kalır.
+  return { kind: "silent" };
 }
 
 export const COPY = {

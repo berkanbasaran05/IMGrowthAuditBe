@@ -100,12 +100,14 @@ describe("Durum makinesi", () => {
   const now = new Date("2026-10-14T10:00:00Z");
   it("boşta: tetikleyici → adres sor, URL → analiz, diğer → yardım", () => {
     assert.equal(L.decide(null, { text: "analiz" }, now).kind, "ask_url");
-    assert.equal(L.decide(null, { text: "ornek.com" }, now).kind, "start_audit");
-    assert.equal(L.decide(null, { text: "selam" }, now).kind, "help");
+    assert.equal(L.decide(null, { text: "ornek.com" }, now).kind, "silent"); // ANALİZ olmadan link yanıtlanmaz
+    assert.equal(L.decide(null, { text: "analiz ornek.com" }, now).kind, "start_audit");
+    assert.equal(L.decide({ state: "awaiting_url" }, { text: "ornek.com" }, now).kind, "start_audit");
+    assert.equal(L.decide(null, { text: "selam" }, now).kind, "silent"); // ilk mesaja yanıt yok
     assert.equal(L.decide({ state: "awaiting_url" }, { text: "bilmiyorum" }, now).kind, "silent");
     assert.equal(L.decide({ state: "helped" }, { text: "Reklam tanıtımı ister misiniz" }, now).kind, "silent"); // yönlendirme bir kez gider
     assert.equal(L.decide({ state: "helped" }, { text: "ANALİZ" }, now).kind, "ask_url");
-    assert.equal(L.decide({ state: "helped" }, { text: "ornekfirma.com" }, now).kind, "start_audit");
+    assert.equal(L.decide({ state: "helped" }, { text: "ornekfirma.com" }, now).kind, "silent");
   });
   it("analiz sürerken tekrar istek → meşgul; diğerleri sessiz", () => {
     assert.equal(L.decide({ state: "auditing" }, { text: "ornek.com" }, now).kind, "busy");
@@ -118,17 +120,17 @@ describe("Durum makinesi", () => {
     assert.equal(L.decide(h, { text: "fiyat nedir?" }, now).kind, "silent");
     assert.equal(L.decide(h, { text: "ornek.com" }, now).kind, "silent");
     assert.equal(L.decide(h, { text: "ANALİZ" }, now).kind, "ask_url");
-    assert.equal(L.decide({ ...h, handoffUntil: new Date(now.getTime() - 1) }, { text: "selam" }, now).kind, "help");
+    assert.equal(L.decide({ ...h, handoffUntil: new Date(now.getTime() - 1) }, { text: "selam" }, now).kind, "silent");
   });
   it("buzkıran yükleri: START_AUDIT → adres, TALK_TO_TEAM → devir (her durumda), ABOUT_AUDIT → açıklama", () => {
     assert.equal(L.decide(null, { text: "", quickReply: "START_AUDIT" }, now).kind, "ask_url");
     assert.equal(L.decide(null, { text: "", quickReply: "TALK_TO_TEAM" }, now).kind, "yes");
     assert.equal(L.decide({ state: "awaiting_url" }, { text: "", quickReply: "ABOUT_AUDIT" }, now).kind, "about");
-    assert.equal(L.decide(null, { text: "evet" }, now).kind, "help"); // yazılı evet yalnızca sonuçtan sonra
+    assert.equal(L.decide(null, { text: "evet" }, now).kind, "silent"); // yazılı evet yalnızca sonuçtan sonra
     assert.equal(L.decide({ state: "result_sent" }, { text: "", quickReply: "START_AUDIT" }, now).kind, "ask_url");
   });
   it("günlük 3 analiz sınırı (İstanbul günü)", () => {
-    const c = { state: "idle", auditsDay: L.dayKey(now), auditsToday: 3 };
+    const c = { state: "awaiting_url", auditsDay: L.dayKey(now), auditsToday: 3 };
     assert.equal(L.decide(c, { text: "ornek.com" }, now).kind, "rate_limited");
     assert.equal(L.decide({ ...c, auditsDay: "2026-10-13" }, { text: "ornek.com" }, now).kind, "start_audit");
   });
@@ -265,7 +267,7 @@ describe("Servis akışı", () => {
   it("ilerleme: en fazla 2 ara mesaj, aynı düzey tekrar gönderilmez", async () => {
     let progress = 30;
     const { svc, msgs } = fakeService({ pollResult: () => (progress >= 100 ? done : { status: "processing", progress }) });
-    await svc.handleMessage(msg("ornek.com"));
+    await svc.handleMessage(msg("analiz ornek.com"));
     const base = msgs().length;
     await svc.pollPending(); assert.equal(msgs().length, base);
     progress = 65; await svc.pollPending(); await svc.pollPending();
@@ -277,7 +279,7 @@ describe("Servis akışı", () => {
   });
   it("sonuç: kart + öncelikli adımlar (hızlı yanıtlar), metinde URL yok; Ücretsiz görüşme devreder", async () => {
     const { svc, sent, convs, msgs } = fakeService({ pollResult: done });
-    await svc.handleMessage(msg("ornek.com"));
+    await svc.handleMessage(msg("analiz ornek.com"));
     sent.length = 0;
     await svc.pollPending();
     const out = msgs();
@@ -299,10 +301,10 @@ describe("Servis akışı", () => {
   });
   it("şablon başarısızsa buton şablonuna, o da başarısızsa URL'siz metne düşer", async () => {
     let f = fakeService({ pollResult: done, failTemplates: 1 });
-    await f.svc.handleMessage(msg("ornek.com")); await f.svc.pollPending();
+    await f.svc.handleMessage(msg("analiz ornek.com")); await f.svc.pollPending();
     assert.equal(f.msgs().at(-2).message.attachment.payload.template_type, "button");
     f = fakeService({ pollResult: done, failTemplates: 2 });
-    await f.svc.handleMessage(msg("ornek.com")); await f.svc.pollPending();
+    await f.svc.handleMessage(msg("analiz ornek.com")); await f.svc.pollPending();
     const t = f.msgs().at(-2).text;
     assert.match(t, /ornek\.com · 71\/100/); assert.ok(t.includes(L.COPY.noLinkNote)); assert.ok(!/https?:/.test(t));
   });
@@ -317,7 +319,7 @@ describe("Servis akışı", () => {
   });
   it("site yoksa nazik mesaj, durum boşa döner", async () => {
     const { svc, convs, msgs } = fakeService({ pollResult: { status: "no_website" } });
-    await svc.handleMessage(msg("ornek.com"));
+    await svc.handleMessage(msg("analiz ornek.com"));
     await svc.pollPending();
     assert.match(msgs().at(-1).text, /ulaşamadık/);
     assert.equal(convs.get("555").state, "idle");
