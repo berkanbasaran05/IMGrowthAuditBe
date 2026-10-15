@@ -88,12 +88,24 @@ export class IgClient {
     } catch { return null; }
   }
 
-  // İçerik yayınlama (izin: instagram_business_content_publish). Hikâye: önce kapsayıcı (media_type=STORIES, image_url
-  // herkese açık JPEG olmalı; Meta adresi kendisi indirir), durum FINISHED olunca media_publish.
-  async createStoryContainer(imageUrl: string): Promise<string> {
-    const j = await this.post(`${encodeURIComponent(this.cfg.accountId)}/media`, { image_url: imageUrl, media_type: "STORIES" }, "Hikâye kapsayıcısı");
-    if (typeof j?.id !== "string" && typeof j?.id !== "number") throw new Error("Hikâye kapsayıcısı kimliği dönmedi");
+  // İçerik yayınlama (izin: instagram_business_content_publish). Önce kapsayıcı (POST /<IG_ID>/media; image_url/video_url
+  // herkese açık olmalı, Meta adresi kendisi indirir), durum FINISHED olunca media_publish. Gövde türe göre:
+  // görsel {image_url, caption}, hikâye {media_type: STORIES, image_url|video_url}, Reels {media_type: REELS, video_url,
+  // caption, share_to_feed, cover_url}, karusel öğesi {image_url, is_carousel_item: true}, karusel {media_type: CAROUSEL, children, caption}.
+  async createContainer(body: Record<string, unknown>, what = "Kapsayıcı"): Promise<string> {
+    const j = await this.post(`${encodeURIComponent(this.cfg.accountId)}/media`, body, what);
+    if (typeof j?.id !== "string" && typeof j?.id !== "number") throw new Error(`${what} kimliği dönmedi`);
     return String(j.id);
+  }
+  createStoryContainer(imageUrl: string): Promise<string> {
+    return this.createContainer({ image_url: imageUrl, media_type: "STORIES" }, "Hikâye kapsayıcısı");
+  }
+  // GET /<IG_ID>/content_publishing_limit: son 24 saatte API ile yayınlanan sayısı ve kota (belgede şu an 50/86400 sn).
+  async publishingLimit(): Promise<{ used: number; total: number | null; durationSec: number | null }> {
+    const j = await this.get(`${encodeURIComponent(this.cfg.accountId)}/content_publishing_limit?fields=quota_usage,config`, "Yayın kotası");
+    const d = Array.isArray(j?.data) ? j.data[0] : j;
+    const n = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : null);
+    return { used: n(d?.quota_usage) ?? 0, total: n(d?.config?.quota_total), durationSec: n(d?.config?.quota_duration) };
   }
   // EXPIRED | ERROR | FINISHED | IN_PROGRESS | PUBLISHED
   async containerStatus(containerId: string): Promise<{ code: string; status?: string }> {

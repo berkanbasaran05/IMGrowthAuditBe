@@ -587,13 +587,23 @@ model IgCommentEvent {
 // Zamanlanmış Instagram hikâyeleri. Görsel IG_MEDIA_DIR içinde; Meta /api/public/ig-media/<file_name> adresinden çeker.
 model IgScheduledPost {
   id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  // story | image | carousel | reels
   kind          String    @default("story") @db.VarChar(16)
+  // İlk dosya (eski hikâye satırları ve CLI yalnızca bunu kullanır)
   fileName      String    @map("file_name") @db.VarChar(120)
+  // Tüm dosyalar sırasıyla (JSON dizi, IG_MEDIA_DIR içindeki adlar); null → [fileName]
+  mediaFiles    Json?     @map("media_files")
+  // Reels kapağı (isteğe bağlı JPEG)
+  coverFile     String?   @map("cover_file") @db.VarChar(120)
   caption       String?
   scheduledAt   DateTime  @map("scheduled_at") @db.Timestamptz(6)
   // queued | publishing | published | failed | canceled
   status        String    @default("queued") @db.VarChar(16)
   containerId   String?   @map("container_id") @db.VarChar(64)
+  // Karusel öğe kapsayıcıları (yeniden denemede tekrar kullanılır)
+  childIds      Json?     @map("child_container_ids")
+  // Kapsayıcının oluşturulduğu an (video işleme bekleme süresi buna göre)
+  containerCreatedAt DateTime? @map("container_created_at") @db.Timestamptz(6)
   mediaId       String?   @map("media_id") @db.VarChar(64)
   error         String?   @db.VarChar(500)
   attempts      Int       @default(0)

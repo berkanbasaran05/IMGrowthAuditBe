@@ -14,7 +14,9 @@ export const STORY_FIELDS = "id,media_type,media_url,thumbnail_url,permalink,tim
 export const MEDIA_LIMIT = 36;
 export const PROFILE_TTL_MS = 5 * 60_000;
 export const MEDIA_TTL_MS = 60_000;
-export const MAX_UPLOAD_BYTES = 8 * 1024 * 1024;
+export const MAX_UPLOAD_BYTES = 8 * 1024 * 1024; // görsel (JPEG)
+export const MAX_REQUEST_FILE_BYTES = 300 * 1024 * 1024; // multer dosya sınırı (Reels videosu); türe göre ayrıca denetlenir
+export const MAX_REQUEST_FILES = 12; // karusel 10 + kapak + pay
 export const MAX_AHEAD_MS = 90 * 86_400_000;
 export const PAST_GRACE_MS = 5 * 60_000;
 
@@ -59,11 +61,14 @@ export function parseSchedule(local: unknown, now = new Date()): { ok: boolean; 
 }
 
 // Kuyruk satırı eylemi: hangi durumlardan izinli ve ne yazılır. publishing/published satırlara dokunulmaz.
-export type QueueAction = "cancel" | "reschedule" | "now";
+export type QueueAction = "cancel" | "reschedule" | "now" | "retry";
 export function queueActionPlan(action: unknown, scheduledAt: unknown, now = new Date()):
   { ok: boolean; from?: string[]; data?: Record<string, unknown>; error?: string } {
   if (action === "cancel") return { ok: true, from: ["queued"], data: { status: "canceled", nextAttemptAt: null } };
   const requeue = { status: "queued", attempts: 0, error: null, nextAttemptAt: null };
+  // Not: kapsayıcı (containerId) korunur; yayıncı önce durumunu sorar (PUBLISHED ise yinelenmez).
+  // Başarısız içerik: hemen yeniden kuyruğa (zamanı şimdi; gecikme kuralına takılmaz), deneme sayacı sıfırlanır.
+  if (action === "retry") return { ok: true, from: ["failed"], data: { ...requeue, scheduledAt: now } };
   if (action === "now") return { ok: true, from: ["queued", "failed", "canceled"], data: { ...requeue, scheduledAt: now } };
   if (action === "reschedule") {
     const p = parseSchedule(scheduledAt, now);
@@ -89,4 +94,20 @@ export function wantsContactSince(raw: string, since: Date) {
     const at = Date.parse(l.inboundWantsContactAt || "");
     return Number.isFinite(at) && at >= since.getTime();
   } catch { return false; }
+}
+
+// Düzenlemede dosya sırası: "f:<mevcut-ad>" (satırda zaten olan dosya) ya da "n:<i>" (bu istekte yüklenen i. dosya).
+export function parseOrder(raw: unknown, current: string[], newCount: number): { ok: boolean; order?: ({ old: string } | { neu: number })[]; error?: string } {
+  let arr: unknown = raw;
+  if (typeof raw === "string") { try { arr = JSON.parse(raw); } catch { return { ok: false, error: "Geçersiz dosya sırası" }; } }
+  if (!Array.isArray(arr) || arr.length > 10) return { ok: false, error: "Geçersiz dosya sırası" };
+  const out: ({ old: string } | { neu: number })[] = [], seen = new Set<string>();
+  for (const t of arr) {
+    if (typeof t !== "string" || seen.has(t)) return { ok: false, error: "Geçersiz dosya sırası" };
+    seen.add(t);
+    if (t.startsWith("f:") && current.includes(t.slice(2))) out.push({ old: t.slice(2) });
+    else if (/^n:\d{1,2}$/.test(t) && Number(t.slice(2)) < newCount) out.push({ neu: Number(t.slice(2)) });
+    else return { ok: false, error: "Geçersiz dosya sırası" };
+  }
+  return { ok: true, order: out };
 }

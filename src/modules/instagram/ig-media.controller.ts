@@ -6,7 +6,8 @@ import { contentTypeFor, isValidMediaFile, mediaDir } from "./ig-publisher.logic
 
 // Hikâye görselleri herkese açık: Meta image_url'yi kendisi indirir. Next.js yalnızca /api, /r, /demo, /sunum… yollarını
 // backend'e ilettiği için yol /api/public/ig-media/:file (iki+ parça; GrowthController'daki "api/:endpoint" ile çakışmaz).
-// Dosya adı katı biçimde doğrulanır ([a-z0-9-]+.(jpg|png)); dizin dışına çıkış mümkün değildir.
+// Dosya adı katı biçimde doğrulanır ([a-z0-9-]+.(jpg|png|mp4|mov)); dizin dışına çıkış mümkün değildir. Video için
+// Range istekleri (206) express sendFile tarafından desteklenir; içerik türü video/mp4 ya da video/quicktime.
 
 const HEADERS = { "X-Robots-Tag": "noindex, nofollow", "X-Content-Type-Options": "nosniff", "Cross-Origin-Resource-Policy": "cross-origin" };
 

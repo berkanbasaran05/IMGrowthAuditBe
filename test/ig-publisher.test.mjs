@@ -71,6 +71,7 @@ describe("Zamanlama (Europe/Istanbul)", () => {
 function fakeFetch(handlers) {
   const calls = [];
   const fetcher = async (url, init = {}) => {
+    if (url.includes("content_publishing_limit")) return { ok: true, status: 200, json: async () => ({ data: [{ quota_usage: 1, config: { quota_total: 50, quota_duration: 86400 } }] }) };
     calls.push({ url, method: init.method || "GET", body: init.body ? JSON.parse(init.body) : null, auth: init.headers?.Authorization });
     const h = handlers.find((x) => x.match(url, init));
     const r = h ? (typeof h.reply === "function" ? h.reply(calls.length) : h.reply) : { status: 500, body: { error: { code: 1, message: "beklenmeyen" } } };
@@ -139,21 +140,22 @@ describe("Yayın akışı (sahte fetch)", () => {
     assert.match(row.error, /Kapsayıcı ERROR: Error: unsupported format/);
   });
 
-  it("~2 dk içinde hazır olmazsa kapsayıcı saklanır; sonraki denemede FINISHED ise yalnızca yayınlanır", async () => {
+  it("kısa yoklamada hazır olmazsa işçi beklemez: satır sırada kalır, deneme hakkı geri verilir; sonraki turda FINISHED ise yalnızca yayınlanır", async () => {
     let ready = false;
     const p = publisher([
       { match: isPost("/1784/media"), reply: { status: 200, body: { id: "c3" } } },
       { match: isGet("/c3?"), reply: () => ({ status: 200, body: { status_code: ready ? "FINISHED" : "IN_PROGRESS" } }) },
       { match: isPost("/1784/media_publish"), reply: { status: 200, body: { id: "m3" } } },
     ]);
-    const row = p.add();
-    assert.equal(await p.svc.processRow(row), "queued");
-    assert.equal(row.containerId, "c3");
-    assert.equal(p.sleeps.reduce((a, b) => a + b, 0), L.STATUS_POLL_DELAYS_MS.reduce((a, b) => a + b, 0));
-    assert.ok(p.sleeps.reduce((a, b) => a + b, 0) <= 130_000);
+    const now = new Date("2026-10-16T08:00:00Z");
+    const row = p.add({ attempts: 1 });
+    assert.equal(await p.svc.processRow(row, now), "processing");
+    assert.deepEqual([row.status, row.attempts, row.containerId, row.error], ["queued", 0, "c3", null]);
+    assert.equal(row.nextAttemptAt.toISOString(), "2026-10-16T08:01:00.000Z");
+    assert.ok(p.sleeps.reduce((a, b) => a + b, 0) <= 15_000, "tur bloklanmaz");
     ready = true;
     const before = p.calls.filter((c) => c.url.endsWith("/1784/media")).length;
-    assert.equal(await p.svc.processRow({ ...row, attempts: 2 }), "published");
+    assert.equal(await p.svc.processRow({ ...row, attempts: 1 }, new Date("2026-10-16T08:01:00Z")), "published");
     assert.equal(p.calls.filter((c) => c.url.endsWith("/1784/media")).length, before, "yeni kapsayıcı açılmadı");
     assert.equal(row.mediaId, "m3");
   });

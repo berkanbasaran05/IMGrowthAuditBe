@@ -110,7 +110,7 @@ describe("Oturum", () => {
     const r = res(); await new IgPanelController(svc).overview({ headers: { cookie } }, r);
     assert.equal(r.code, 200);
     assert.equal(r.body.connected, false); assert.equal(r.body.profile, null);
-    assert.deepEqual(r.body.kpis, { storiesQueued: 0, storiesPublishedWeek: 0, dmAnalyses7d: 2, commentTriggers7d: 4, wantsContact7d: 1 });
+    assert.deepEqual(r.body.kpis, { queued: 0, publishedWeek: 0, dmAnalyses7d: 2, commentTriggers7d: 4, wantsContact7d: 1 });
     const m = res(); await new IgPanelController(svc).media({ headers: { cookie } }, m);
     assert.deepEqual(m.body, { connected: false, items: [], stories: [] });
   });
