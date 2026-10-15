@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { DEFAULT_BACKEND_BASE } from "../sales/report.public.js";
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from "@nestjs/common";
 import { PrismaService } from "../../infrastructure/prisma/prisma.service.js";
@@ -44,17 +45,25 @@ export class InstagramService implements OnModuleInit, OnModuleDestroy {
   }
   onModuleDestroy() { for (const t of this.timers) clearInterval(t); }
 
+  // Depodaki (otomatik yenilenen) belirteç, türetildiği env belirtecinin parmak izini (src) taşır. Env'e yeni belirteç
+  // girilirse (ör. yeni izinle üretildi) parmak izi tutmaz: kayıt silinir, env belirteci kullanılır ve yenileme ondan devam eder.
   tokenStore(): TokenStore {
+    const envFp = () => tokenFingerprint(process.env.IG_ACCESS_TOKEN || "");
     return {
       get: async () => {
         const row = await this.prisma.keyValue.findUnique({ where: { key: TOKEN_KEY } });
         if (!row) return null;
         const v = JSON.parse(row.value);
+        if (process.env.IG_ACCESS_TOKEN && v.src !== envFp()) {
+          await this.prisma.keyValue.deleteMany({ where: { key: TOKEN_KEY } });
+          this.log.log("Env'de yeni Instagram belirteci var; depodaki belirteç sıfırlandı");
+          return null;
+        }
         return v.enc ? decryptSecret(v.t) : v.t;
       },
       set: async (token, expiresIn) => {
         const enc = encryptionConfigured();
-        const value = JSON.stringify({ t: enc ? encryptSecret(token) : token, enc, at: new Date().toISOString(), exp: new Date(Date.now() + expiresIn * 1000).toISOString() });
+        const value = JSON.stringify({ t: enc ? encryptSecret(token) : token, enc, src: envFp(), at: new Date().toISOString(), exp: new Date(Date.now() + expiresIn * 1000).toISOString() });
         await this.prisma.keyValue.upsert({ where: { key: TOKEN_KEY }, create: { key: TOKEN_KEY, value }, update: { value } });
       },
     };
@@ -63,6 +72,7 @@ export class InstagramService implements OnModuleInit, OnModuleDestroy {
   async maybeRefreshToken() {
     if (!this.client) return;
     try {
+      await this.client.token(); // env belirteci değiştiyse depodaki kayıt burada sıfırlanır
       const row = await this.prisma.keyValue.findUnique({ where: { key: TOKEN_KEY } });
       const at = row ? Date.parse(JSON.parse(row.value).at) : 0;
       if (Date.now() - at < REFRESH_EVERY_MS) return;
@@ -292,5 +302,8 @@ export class InstagramService implements OnModuleInit, OnModuleDestroy {
     await this.send(igsid, [level === 2 ? COPY.progressAi : COPY.progressScan]).catch((e) => this.log.warn(`Ara mesaj gönderilemedi: ${e.message}`));
   }
 }
+
+// Env belirtecinin parmak izi (sha256, ilk 32 onaltılık hane). Belirtecin kendisi saklanmaz/yazdırılmaz.
+export const tokenFingerprint = (token: string) => (token ? createHash("sha256").update(token).digest("hex").slice(0, 32) : "");
 
 const progressKey = (igsid: string) => `ig:progress:${igsid}`.slice(0, 300);

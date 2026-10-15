@@ -26,9 +26,15 @@ export class IgClient {
     });
     if (!res.ok) {
       const b = await res.json().catch(() => ({}));
-      throw new Error(`${what} başarısız (${res.status}${b?.error?.code ? `, kod ${b.error.code}` : ""})`);
+      throw new Error(`${what} başarısız (${res.status}${errDetail(b)})`);
     }
     return res.json().catch(() => ({}));
+  }
+  private async get(path: string, what: string) {
+    const res = await this.fetcher(`${this.base()}/${path}`, { headers: { Authorization: `Bearer ${await this.token()}` }, signal: AbortSignal.timeout(15_000) });
+    const j = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(`${what} başarısız (${res.status}${errDetail(j)})`);
+    return j;
   }
   private msgPath() { return `${encodeURIComponent(this.cfg.accountId)}/messages`; }
 
@@ -80,6 +86,24 @@ export class IgClient {
     } catch { return null; }
   }
 
+  // İçerik yayınlama (izin: instagram_business_content_publish). Hikâye: önce kapsayıcı (media_type=STORIES, image_url
+  // herkese açık JPEG olmalı; Meta adresi kendisi indirir), durum FINISHED olunca media_publish.
+  async createStoryContainer(imageUrl: string): Promise<string> {
+    const j = await this.post(`${encodeURIComponent(this.cfg.accountId)}/media`, { image_url: imageUrl, media_type: "STORIES" }, "Hikâye kapsayıcısı");
+    if (typeof j?.id !== "string" && typeof j?.id !== "number") throw new Error("Hikâye kapsayıcısı kimliği dönmedi");
+    return String(j.id);
+  }
+  // EXPIRED | ERROR | FINISHED | IN_PROGRESS | PUBLISHED
+  async containerStatus(containerId: string): Promise<{ code: string; status?: string }> {
+    const j = await this.get(`${encodeURIComponent(containerId)}?fields=status_code,status`, "Kapsayıcı durumu");
+    return { code: String(j?.status_code || ""), status: typeof j?.status === "string" ? j.status.slice(0, 200) : undefined };
+  }
+  async publishMedia(creationId: string): Promise<string> {
+    const j = await this.post(`${encodeURIComponent(this.cfg.accountId)}/media_publish`, { creation_id: creationId }, "Yayınlama");
+    if (typeof j?.id !== "string" && typeof j?.id !== "number") throw new Error("Yayınlanan medya kimliği dönmedi");
+    return String(j.id);
+  }
+
   // Uzun ömürlü belirteci yeniler (en az 24 saatlik ve süresi dolmamış olmalı). Yeni belirteç depoya yazılır.
   async refresh(): Promise<number> {
     const current = await this.token();
@@ -90,4 +114,12 @@ export class IgClient {
     if (this.tokens) await this.tokens.set(j.access_token, expires);
     return expires;
   }
+}
+
+// Meta hata ayrıntısı: kod, alt kod ve kısa mesaj (belirteç içermez; yine de token benzeri değerler ayıklanır).
+function errDetail(b: any) {
+  const e = b?.error;
+  if (!e) return "";
+  const msg = typeof (e.error_user_msg || e.message) === "string" ? String(e.error_user_msg || e.message).replace(/[A-Za-z0-9_-]{40,}/g, "***").slice(0, 160) : "";
+  return `${e.code ? `, kod ${e.code}` : ""}${e.error_subcode ? `/${e.error_subcode}` : ""}${msg ? `: ${msg}` : ""}`;
 }

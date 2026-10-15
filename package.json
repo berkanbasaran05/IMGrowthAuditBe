@@ -19,7 +19,8 @@
     "prisma:studio": "prisma studio",
     "typecheck": "tsc --noEmit -p tsconfig.build.json",
     "test": "rm -rf .test-build && tsc -p tsconfig.build.json --outDir .test-build && node --env-file-if-exists=.env --test test/*.test.mjs",
-    "ig:setup-profile": "node scripts/ig-setup-profile.mjs"
+    "ig:setup-profile": "node scripts/ig-setup-profile.mjs",
+    "ig:schedule": "node scripts/ig-schedule-stories.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "0.129.0",

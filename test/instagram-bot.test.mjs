@@ -423,3 +423,33 @@ describe("Skor kartı görseli", () => {
     assert.deepEqual([png.readUInt32BE(16), png.readUInt32BE(20)], [1080, 1080]);
   });
 });
+
+describe("Belirteç deposu: env belirteci değişince", () => {
+  it("depodaki yenilenmiş belirteç aynı env'den türediyse kullanılır, env değişince sıfırlanır", async () => {
+    const saved = { ...process.env };
+    delete process.env.INTEGRATION_ENCRYPTION_KEY;
+    Object.assign(process.env, ENV, { IG_ACCESS_TOKEN: "envA" });
+    const { svc } = fakeService();
+    const store = svc.tokenStore();
+    await store.set("refreshedA", 60 * 86400);
+    assert.equal(await store.get(), "refreshedA");
+    const client = new IgClient({ ...ENV, accessToken: "envB", version: "v25.0", accountId: "1784" }, store, async () => ({ ok: true, status: 200, json: async () => ({}) }));
+    process.env.IG_ACCESS_TOKEN = "envB";
+    assert.equal(await store.get(), null, "parmak izi tutmayınca depo boşalır");
+    assert.equal(await client.token(), "envB");
+    await store.set("refreshedB", 60 * 86400);
+    assert.equal(await client.token(), "refreshedB", "yenileme yeni env'den devam eder");
+    process.env = saved;
+  });
+  it("parmak izi olmayan eski kayıt env lehine sıfırlanır; parmak izi belirteci içermez", async () => {
+    const saved = { ...process.env };
+    Object.assign(process.env, ENV, { IG_ACCESS_TOKEN: "envC" });
+    const { svc } = fakeService();
+    await svc.prisma.keyValue.upsert({ where: { key: "ig:access_token" }, create: { key: "ig:access_token", value: JSON.stringify({ t: "old", enc: false, at: new Date().toISOString() }) }, update: {} });
+    assert.equal(await svc.tokenStore().get(), null);
+    const { tokenFingerprint } = await load("instagram/instagram.service");
+    assert.match(tokenFingerprint("envC"), /^[0-9a-f]{32}$/);
+    assert.ok(!tokenFingerprint("envC").includes("envC"));
+    process.env = saved;
+  });
+});

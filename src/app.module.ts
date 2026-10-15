@@ -22,11 +22,13 @@ import { RetentionService } from "./modules/ops/retention.service.js";
 import { PaymentLinkController, PaymentsAdminController, PortalBillingController } from "./modules/payments/payments.controller.js";
 import { InstagramController } from "./modules/instagram/instagram.controller.js";
 import { InstagramService } from "./modules/instagram/instagram.service.js";
+import { IgMediaController, IgQueueController } from "./modules/instagram/ig-media.controller.js";
+import { IgPublisherService } from "./modules/instagram/ig-publisher.service.js";
 import { PaymentsService } from "./modules/payments/payments.service.js";
 
 @Module({
   // AuditController, "api/:endpoint" yakalayıcısını içeren GrowthController'dan önce kaydedilir.
-  controllers: [HealthController, CrmController, AuditController, PublicAuditController, SalesController, PublicReportController, PublicReportApiController, GrowthManagerAdminController, PortalBillingController, PortalController, OAuthController, GeoController, OpsController, PaymentsAdminController, PaymentLinkController, InstagramController, GrowthController],
-  providers: [PrismaService, DatabaseService, CrmService, AuditService, PublicAuditService, AuditQueue, SalesService, GrowthManagerService, GrowthManagerScheduler, GeoService, RetentionService, OpsService, PaymentsService, InstagramService],
+  controllers: [HealthController, CrmController, AuditController, PublicAuditController, SalesController, PublicReportController, PublicReportApiController, GrowthManagerAdminController, PortalBillingController, PortalController, OAuthController, GeoController, OpsController, PaymentsAdminController, PaymentLinkController, InstagramController, IgMediaController, IgQueueController, GrowthController],
+  providers: [PrismaService, DatabaseService, CrmService, AuditService, PublicAuditService, AuditQueue, SalesService, GrowthManagerService, GrowthManagerScheduler, GeoService, RetentionService, OpsService, PaymentsService, InstagramService, IgPublisherService],
 })
 export class AppModule {}

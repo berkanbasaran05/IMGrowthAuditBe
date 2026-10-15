@@ -583,3 +583,25 @@ model IgCommentEvent {
   @@index([igsid, handledAt], map: "ig_comment_events_igsid_idx")
   @@map("ig_comment_events")
 }
+
+// Zamanlanmış Instagram hikâyeleri. Görsel IG_MEDIA_DIR içinde; Meta /api/public/ig-media/<file_name> adresinden çeker.
+model IgScheduledPost {
+  id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  kind          String    @default("story") @db.VarChar(16)
+  fileName      String    @map("file_name") @db.VarChar(120)
+  caption       String?
+  scheduledAt   DateTime  @map("scheduled_at") @db.Timestamptz(6)
+  // queued | publishing | published | failed | canceled
+  status        String    @default("queued") @db.VarChar(16)
+  containerId   String?   @map("container_id") @db.VarChar(64)
+  mediaId       String?   @map("media_id") @db.VarChar(64)
+  error         String?   @db.VarChar(500)
+  attempts      Int       @default(0)
+  nextAttemptAt DateTime? @map("next_attempt_at") @db.Timestamptz(6)
+  publishedAt   DateTime? @map("published_at") @db.Timestamptz(6)
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt     DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([status, scheduledAt], map: "ig_scheduled_posts_status_idx")
+  @@map("ig_scheduled_posts")
+}
