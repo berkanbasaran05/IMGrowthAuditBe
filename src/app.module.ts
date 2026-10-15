@@ -24,11 +24,13 @@ import { InstagramController } from "./modules/instagram/instagram.controller.js
 import { InstagramService } from "./modules/instagram/instagram.service.js";
 import { IgMediaController, IgQueueController } from "./modules/instagram/ig-media.controller.js";
 import { IgPublisherService } from "./modules/instagram/ig-publisher.service.js";
+import { IgPanelController } from "./modules/instagram/ig-panel.controller.js";
+import { IgPanelService } from "./modules/instagram/ig-panel.service.js";
 import { PaymentsService } from "./modules/payments/payments.service.js";
 
 @Module({
   // AuditController, "api/:endpoint" yakalayıcısını içeren GrowthController'dan önce kaydedilir.
-  controllers: [HealthController, CrmController, AuditController, PublicAuditController, SalesController, PublicReportController, PublicReportApiController, GrowthManagerAdminController, PortalBillingController, PortalController, OAuthController, GeoController, OpsController, PaymentsAdminController, PaymentLinkController, InstagramController, IgMediaController, IgQueueController, GrowthController],
-  providers: [PrismaService, DatabaseService, CrmService, AuditService, PublicAuditService, AuditQueue, SalesService, GrowthManagerService, GrowthManagerScheduler, GeoService, RetentionService, OpsService, PaymentsService, InstagramService, IgPublisherService],
+  controllers: [HealthController, CrmController, AuditController, PublicAuditController, SalesController, PublicReportController, PublicReportApiController, GrowthManagerAdminController, PortalBillingController, PortalController, OAuthController, GeoController, OpsController, PaymentsAdminController, PaymentLinkController, InstagramController, IgMediaController, IgQueueController, IgPanelController, GrowthController],
+  providers: [PrismaService, DatabaseService, CrmService, AuditService, PublicAuditService, AuditQueue, SalesService, GrowthManagerService, GrowthManagerScheduler, GeoService, RetentionService, OpsService, PaymentsService, InstagramService, IgPublisherService, IgPanelService],
 })
 export class AppModule {}

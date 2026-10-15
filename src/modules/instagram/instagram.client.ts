@@ -36,6 +36,8 @@ export class IgClient {
     if (!res.ok) throw new Error(`${what} başarısız (${res.status}${errDetail(j)})`);
     return j;
   }
+  // Panel okumaları (profil, medya, hikâyeler, permalink). path sorgu dizesini içerir; belirteç yalnızca başlıkta.
+  read(path: string, what: string) { return this.get(path, what); }
   private msgPath() { return `${encodeURIComponent(this.cfg.accountId)}/messages`; }
 
   // Herhangi bir mesaj nesnesi (metin, şablon). Hızlı yanıtlar message.quick_replies içinde.
