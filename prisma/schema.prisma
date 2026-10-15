@@ -615,3 +615,10 @@ model IgScheduledPost {
   @@index([status, scheduledAt], map: "ig_scheduled_posts_status_idx")
   @@map("ig_scheduled_posts")
 }
+
+model NotificationRead {
+  key    String   @id @db.VarChar(200)
+  readAt DateTime @default(now()) @map("read_at") @db.Timestamptz(6)
+
+  @@map("notification_reads")
+}

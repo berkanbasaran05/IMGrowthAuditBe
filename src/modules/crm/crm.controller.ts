@@ -17,6 +17,12 @@ export class CrmController {
   @Get()
   dashboard(@Req() req: Request, @Res() res: Response) { return this.run(req, res, () => this.crm.dashboard()); }
 
+  @Get("notifications")
+  notifications(@Req() req: Request, @Res() res: Response) { return this.run(req, res, () => this.crm.notifications()); }
+
+  @Post("notifications/read")
+  readNotifications(@Body() body: any, @Req() req: Request, @Res() res: Response) { return this.run(req, res, () => this.crm.markNotificationsRead(body?.keys)); }
+
   @Post("customers")
   customer(@Body() body: any, @Req() req: Request, @Res() res: Response) { return this.run(req, res, () => this.crm.createCustomer(body)); }
 

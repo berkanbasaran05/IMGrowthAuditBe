@@ -195,6 +195,52 @@ export class CrmService {
     return result.rows[0];
   }
 
+  // Zamanı gelen işler: gecikmiş/yaklaşan ödemeler, aylık ödeme günleri, görev teslimleri, biten sözleşmeler.
+  async notifications() {
+    const [customers, payments, tasks, contracts, reads] = await Promise.all([
+      this.database.query(`SELECT id::text, name, status, billing_day AS "billingDay", service_start::text AS "serviceStart", ad_service_fee::float8 AS fee FROM customers`),
+      this.database.query(`SELECT id::text, customer_id::text AS "customerId", amount::float8, currency, due_date::text AS "dueDate" FROM payments WHERE status IN ('planned','invoiced') AND due_date IS NOT NULL`),
+      this.database.query(`SELECT id::text, customer_id::text AS "customerId", title, assignee, due_date::text AS "dueDate" FROM tasks WHERE status <> 'done' AND due_date IS NOT NULL`),
+      this.database.query(`SELECT id::text, customer_id::text AS "customerId", title, end_date::text AS "endDate" FROM contracts WHERE status IN ('signed','active') AND end_date IS NOT NULL`),
+      this.database.query(`SELECT key FROM notification_reads WHERE read_at > now() - interval '120 days'`),
+    ]);
+    const read = new Set(reads.rows.map((r: any) => r.key));
+    const tz = (d: Date) => new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Istanbul", year: "numeric", month: "2-digit", day: "2-digit" }).format(d);
+    const today = tz(new Date());
+    const diff = (date: string) => Math.round((Date.parse(date + "T00:00:00Z") - Date.parse(today + "T00:00:00Z")) / 86400000);
+    const name = new Map(customers.rows.map((c: any) => [c.id, c.name]));
+    const tl = (n: number, cur = "TRY") => `${Math.round(n).toLocaleString("tr-TR")} ${cur === "TRY" ? "₺" : cur}`;
+    const when = (d: number) => d < 0 ? `${-d} gün gecikti` : d === 0 ? "bugün" : d === 1 ? "yarın" : `${d} gün sonra`;
+    const items: any[] = [];
+    const push = (key: string, type: string, days: number, customerId: string, title: string, date: string) =>
+      items.push({ key, type, level: days < 0 ? "overdue" : days === 0 ? "today" : "soon", days, customerId, customer: name.get(customerId) || "", title, body: when(days), date, read: read.has(key) });
+
+    const openDates = new Set(payments.rows.map((p: any) => `${p.customerId}:${p.dueDate.slice(0, 7)}`));
+    for (const p of payments.rows) { const d = diff(p.dueDate); if (d <= 3) push(`payment:${p.id}:${p.dueDate}`, "payment", d, p.customerId, `${tl(p.amount, p.currency)} ödeme ${d < 0 ? "gecikti" : "bekleniyor"}`, p.dueDate); }
+    for (const c of customers.rows) {
+      const day = Number(c.billingDay); if (c.status !== "active" || !(day >= 1 && day <= 31)) continue;
+      const [y, m] = today.split("-").map(Number);
+      for (const off of [0, 1]) {
+        const last = new Date(Date.UTC(y, m - 1 + off + 1, 0)).getUTCDate();
+        const dt = new Date(Date.UTC(y, m - 1 + off, Math.min(day, last))).toISOString().slice(0, 10);
+        const d = diff(dt);
+        if (d < 0 || d > 3 || (c.serviceStart && dt <= c.serviceStart) || openDates.has(`${c.id}:${dt.slice(0, 7)}`)) continue;
+        push(`billing:${c.id}:${dt}`, "billing", d, c.id, `Aylık ödeme günü${c.fee ? ` · ${tl(c.fee)}` : ""}`, dt);
+      }
+    }
+    for (const t of tasks.rows) { const d = diff(t.dueDate); if (d <= 2) push(`task:${t.id}:${t.dueDate}`, "task", d, t.customerId, t.title, t.dueDate); }
+    for (const k of contracts.rows) { const d = diff(k.endDate); if (d <= 14 && d >= -7) push(`contract:${k.id}:${k.endDate}`, "contract", d, k.customerId, `${k.title} sözleşmesi ${d < 0 ? "sona erdi" : "sona eriyor"}`, k.endDate); }
+
+    items.sort((a, b) => Number(a.read) - Number(b.read) || a.days - b.days);
+    return { items, unread: items.filter((x) => !x.read).length, today };
+  }
+
+  async markNotificationsRead(keys: unknown) {
+    const list = (Array.isArray(keys) ? keys : []).map((k) => text(k, 200)).filter(Boolean).slice(0, 200);
+    if (list.length) await this.database.query(`INSERT INTO notification_reads (key) SELECT unnest($1::text[]) ON CONFLICT (key) DO NOTHING`, [list]);
+    return { ok: true, count: list.length };
+  }
+
   private async customer(customerId: string) {
     const result = await this.database.query(`SELECT ${CUSTOMER_FIELDS} FROM customers WHERE id=$1`, [customerId]);
     if (!result.rowCount) throw new Error("Müşteri bulunamadı");
