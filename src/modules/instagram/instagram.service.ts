@@ -193,7 +193,8 @@ export class InstagramService implements OnModuleInit, OnModuleDestroy {
 
     const replied = { igsid: c.igsid, action: { in: ["private_reply", "audit_started"] } };
     const dayStart = new Date(Date.parse(`${dayKey(now)}T00:00:00+03:00`));
-    if (c.mediaId && (await ev.count({ where: { ...replied, mediaId: c.mediaId } })) >= 1) return done("limited_post");
+    // Aynı gönderide aynı kişiye 24 saatte bir yanıt (spam koruması); ertesi gün yeniden yorum yazarsa yine yanıt alır.
+    if (c.mediaId && (await ev.count({ where: { ...replied, mediaId: c.mediaId, handledAt: { gte: new Date(now.getTime() - 24 * 3_600_000) } } })) >= 1) return done("limited_post");
     if ((await ev.count({ where: { ...replied, handledAt: { gte: dayStart } } })) >= COMMENT_DAILY_LIMIT) return done("limited_day");
 
     let conv = await this.prisma.igConversation.findUnique({ where: { igsid: c.igsid } });
