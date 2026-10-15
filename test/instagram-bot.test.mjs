@@ -102,7 +102,10 @@ describe("Durum makinesi", () => {
     assert.equal(L.decide(null, { text: "analiz" }, now).kind, "ask_url");
     assert.equal(L.decide(null, { text: "ornek.com" }, now).kind, "start_audit");
     assert.equal(L.decide(null, { text: "selam" }, now).kind, "help");
-    assert.equal(L.decide({ state: "awaiting_url" }, { text: "bilmiyorum" }, now).kind, "ask_url");
+    assert.equal(L.decide({ state: "awaiting_url" }, { text: "bilmiyorum" }, now).kind, "silent");
+    assert.equal(L.decide({ state: "helped" }, { text: "Reklam tanıtımı ister misiniz" }, now).kind, "silent"); // yönlendirme bir kez gider
+    assert.equal(L.decide({ state: "helped" }, { text: "ANALİZ" }, now).kind, "ask_url");
+    assert.equal(L.decide({ state: "helped" }, { text: "ornekfirma.com" }, now).kind, "start_audit");
   });
   it("analiz sürerken tekrar istek → meşgul; diğerleri sessiz", () => {
     assert.equal(L.decide({ state: "auditing" }, { text: "ornek.com" }, now).kind, "busy");

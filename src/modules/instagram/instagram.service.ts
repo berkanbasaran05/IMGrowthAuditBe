@@ -144,7 +144,7 @@ export class InstagramService implements OnModuleInit, OnModuleDestroy {
     switch (action.kind) {
       case "silent": return;
       case "busy": return this.send(msg.igsid, [COPY.busy]);
-      case "help": return this.send(msg.igsid, [COPY.help]);
+      case "help": await set({ state: "helped" }); return this.send(msg.igsid, [COPY.help]);
       case "about": return this.send(msg.igsid, [COPY.about], ABOUT_QUICK);
       case "rate_limited": await set({ state: "idle" }); return this.send(msg.igsid, [COPY.rateLimited]);
       case "ask_url": await set({ state: "awaiting_url", handoffUntil: null }); return this.send(msg.igsid, [COPY.askUrl]);

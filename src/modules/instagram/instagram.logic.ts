@@ -92,7 +92,7 @@ export function detectIntent(msg: { text: string; quickReply?: string | null }):
   return "other";
 }
 
-export type State = "idle" | "awaiting_url" | "auditing" | "sending" | "result_sent" | "handoff";
+export type State = "idle" | "helped" | "awaiting_url" | "auditing" | "sending" | "result_sent" | "handoff";
 export interface ConvLike { state: State | string; handoffUntil?: Date | null; auditsDay?: string | null; auditsToday?: number }
 export type Action =
   | { kind: "ask_url" } | { kind: "start_audit"; url: URL } | { kind: "busy" } | { kind: "yes" } | { kind: "no" }
@@ -117,7 +117,8 @@ export function decide(conv: ConvLike | null, msg: { text: string; quickReply?: 
   // "Ücretsiz görüşme" butonu / buzkıran her durumda; yazılı "evet" yalnızca sonuçtan sonra.
   if (msg.quickReply === PAYLOAD.talk || (state === "result_sent" && intent === "yes")) return { kind: "yes" };
   if (state === "result_sent" && intent === "no") return { kind: "no" };
-  if (state === "awaiting_url") return { kind: "ask_url" };
+  // Tanıtım/yönlendirme mesajı sohbet başına bir kez gider; sonraki serbest mesajlar ekibe kalır (bot susar).
+  if (state === "helped" || state === "awaiting_url" || state === "result_sent") return { kind: "silent" };
   return { kind: "help" };
 }
 
