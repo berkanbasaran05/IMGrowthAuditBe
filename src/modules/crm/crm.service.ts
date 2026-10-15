@@ -167,7 +167,8 @@ export class CrmService {
 
   async updateRecord(kind: "contracts" | "payments" | "tasks", recordId: string, patch: any) {
     const values = kind === "contracts" ? ["draft","sent","signed","active","completed","cancelled"] : kind === "payments" ? ["planned","invoiced","paid","cancelled"] : ["todo","doing","done"];
-    const current = await this.database.query(`SELECT *, to_char(due_date, 'YYYY-MM-DD') AS due_text, to_char(paid_at, 'YYYY-MM-DD') AS paid_text FROM ${kind} WHERE id=$1`, [recordId]);
+    const extra = kind === "payments" ? ", to_char(due_date, 'YYYY-MM-DD') AS due_text, to_char(paid_at, 'YYYY-MM-DD') AS paid_text" : kind === "tasks" ? ", to_char(due_date, 'YYYY-MM-DD') AS due_text" : "";
+    const current = await this.database.query(`SELECT *${extra} FROM ${kind} WHERE id=$1`, [recordId]);
     if (!current.rowCount) throw new Error("Kayıt bulunamadı");
     const row = current.rows[0];
     const status = allowed(patch?.status, values, row.status);
@@ -184,10 +185,9 @@ export class CrmService {
       return result.rows[0];
     }
     if (kind === "tasks") {
-      const task = await this.database.query(`SELECT to_char(due_date, 'YYYY-MM-DD') AS due_text FROM tasks WHERE id=$1`, [recordId]);
       const title = "title" in patch ? text(patch.title, 180) : row.title; if (!title) throw new Error("Görev adı gerekli");
       const result = await this.database.query(`UPDATE tasks SET title=$2, assignee=$3, due_date=$4, status=$5, notes=$6, updated_at=now() WHERE id=$1 RETURNING ${fields}`,
-        [recordId, title, "assignee" in patch ? text(patch.assignee, 80) || null : row.assignee, "dueDate" in patch ? date(patch.dueDate) : task.rows[0].due_text,
+        [recordId, title, "assignee" in patch ? text(patch.assignee, 80) || null : row.assignee, "dueDate" in patch ? date(patch.dueDate) : row.due_text,
          status, "notes" in patch ? text(patch.notes, 1000) || null : row.notes]);
       return result.rows[0];
     }
