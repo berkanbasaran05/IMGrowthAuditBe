@@ -183,6 +183,14 @@ export class CrmService {
          "invoiceNo" in patch ? text(patch.invoiceNo, 80) || null : row.invoice_no, "notes" in patch ? text(patch.notes, 1000) || null : row.notes]);
       return result.rows[0];
     }
+    if (kind === "tasks") {
+      const task = await this.database.query(`SELECT to_char(due_date, 'YYYY-MM-DD') AS due_text FROM tasks WHERE id=$1`, [recordId]);
+      const title = "title" in patch ? text(patch.title, 180) : row.title; if (!title) throw new Error("Görev adı gerekli");
+      const result = await this.database.query(`UPDATE tasks SET title=$2, assignee=$3, due_date=$4, status=$5, notes=$6, updated_at=now() WHERE id=$1 RETURNING ${fields}`,
+        [recordId, title, "assignee" in patch ? text(patch.assignee, 80) || null : row.assignee, "dueDate" in patch ? date(patch.dueDate) : task.rows[0].due_text,
+         status, "notes" in patch ? text(patch.notes, 1000) || null : row.notes]);
+      return result.rows[0];
+    }
     const result = await this.database.query(`UPDATE ${kind} SET status=$2, updated_at=now() WHERE id=$1 RETURNING ${fields}`, [recordId, status]);
     return result.rows[0];
   }
