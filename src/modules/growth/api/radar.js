@@ -96,7 +96,7 @@ export default async function handler(req, res) {
     for (const lead of unique.values()) {
       const { id, ...data } = lead, current = await getOne("leads", id);
       if (current) {
-        await put("leads", id, { ...data, ...Object.fromEntries(["status","statusAt","notes","seq","works","work","callList"].filter((k) => current[k] !== undefined).map((k) => [k, current[k]])) });
+        await put("leads", id, { ...data, ...Object.fromEntries(["status","statusAt","notes","seq","works","work","callList","targetList","targetSector","contactName","contactTitle","contactLine","contactSource","contactConf"].filter((k) => current[k] !== undefined).map((k) => [k, current[k]])) });
         updated++;
       } else { await put("leads", id, data); added++; }
     }

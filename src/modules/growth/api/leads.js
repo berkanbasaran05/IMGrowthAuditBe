@@ -91,7 +91,7 @@ export default async function handler(req, res) {
 }
 
 const HUMAN_FIELDS = ["status", "statusAt", "notes", "seq", "undo", "optOut", "works", "work", "workAt", "callList", "callAt", "callDay", "callLog", "callNote", "callDoneAt",
-  "contactName", "contactTitle", "contactLine", "contactSource", "contactConf", "demo", "bookingId", "interest", "heat", "manual"];
+  "contactName", "contactTitle", "contactLine", "contactSource", "contactConf", "demo", "bookingId", "interest", "heat", "manual", "targetList", "targetSector"];
 const pick = (o, keys) => Object.fromEntries(keys.filter((k) => o[k] !== undefined).map((k) => [k, o[k]]));
 
 const INFO = ["name", "sector", "city", "district", "website", "websiteStatus", "ads", "services", "phone", "email", "instagram", "capacity"];
