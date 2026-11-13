@@ -622,3 +622,26 @@ model NotificationRead {
 
   @@map("notification_reads")
 }
+
+// Marka Partneri asistanı konuşmaları (herkese açık sohbet). Tam konuşma (model geçmişi, görünüm, profil, analiz,
+// maliyet) data içindedir; panel listesi için gereken alanlar ayrı sütunlardadır. Süresiz saklanır (otomatik
+// silme yok); yalnızca panelden tek tek silinir.
+model AssistantConversation {
+  id           String   @id @db.VarChar(32)
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+  locale       String   @default("tr") @db.VarChar(5)
+  ipHash       String?  @map("ip_hash") @db.Char(64)
+  leadId       String?  @map("lead_id") @db.VarChar(120)
+  company      String?  @db.VarChar(200)
+  sector       String?  @db.VarChar(200)
+  auditDomain  String?  @map("audit_domain") @db.VarChar(255)
+  firstMessage String?  @map("first_message") @db.VarChar(300)
+  userTurns    Int      @default(0) @map("user_turns")
+  costUsd      Float    @default(0) @map("cost_usd")
+  data         Json
+
+  @@index([updatedAt(sort: Desc)], map: "assistant_conversations_updated_idx")
+  @@index([leadId], map: "assistant_conversations_lead_idx")
+  @@map("assistant_conversations")
+}

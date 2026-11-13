@@ -18,7 +18,7 @@ import { assertPublicUrl, normalizeWebsite } from "./safe-fetch.js";
 export type Locale = "tr" | "en";
 export interface PublicAuditInput {
   websiteUrl: string; name: string; email: string; phone: string; company: string; sector: string;
-  instagram: string; message: string; source: "web" | "instagram"; locale: Locale;
+  instagram: string; message: string; source: "web" | "instagram" | "assistant"; locale: Locale;
 }
 export class PublicAuditError extends Error {
   constructor(readonly code: string, message: string, readonly status = 400) { super(message); }
@@ -141,7 +141,7 @@ export class PublicAuditService {
   }
 
   async notify(leadId: string, input: PublicAuditInput, isNew: boolean) {
-    const src = input.source === "instagram" ? "Instagram" : "Web sitesi";
+    const src = input.source === "instagram" ? "Instagram" : input.source === "assistant" ? "Marka asistanı" : "Web sitesi";
     const lines = [
       `${isNew ? "Yeni" : "Tekrar"} ücretsiz analiz talebi (${src})`,
       `Firma: ${input.company || domainOf(input.websiteUrl)}`, input.name && `Kişi: ${input.name}`,
