@@ -65,6 +65,11 @@ describe("Analiz sonucunun modele verilişi", () => {
     assert.equal((n.match(/<\/analiz>/g) || []).length, 2); // JSON içinde metin olarak + gerçek kapanış
     assert.doesNotThrow(() => JSON.parse(n.slice(n.indexOf("<analiz>") + 8, n.lastIndexOf("</analiz>"))));
   });
+  it("bot korumalı siteyi doğru anlatır ve ekran görüntüsü ister", () => {
+    const n = logic.auditNotice({ status: "no_website", reason: "bot_protected" }, "ornek.com", "tr");
+    assert.match(n, /bot korumasıyla/);
+    assert.match(n, /ekran görüntü/);
+  });
   it("tamamlanamayan analizi bildirir", () => {
     assert.match(logic.auditNotice({ status: "failed", message: "Site açılmadı" }, "ornek.com", "tr"), /tamamlanamadı \(Site açılmadı\)/);
   });

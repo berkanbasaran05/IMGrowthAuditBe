@@ -1,3 +1,4 @@
+import { BOT_BLOCK_NOTE } from "./audit.runner.js";
 import { Injectable } from "@nestjs/common";
 import { reportAssets, reportLink } from "../sales/report.public.js";
 import crypto from "node:crypto";
@@ -166,6 +167,9 @@ export class PublicAuditService {
     const locale = (req.locale === "en" ? "en" : "tr") as Locale;
     if (audit.status === "queued" || audit.status === "running") {
       return { status: "processing", progress: audit.progress ?? 0, stage: audit.stage || (locale === "en" ? "Queued" : "Sırada") };
+    }
+    if (audit.status === "no_verified_website" && String(audit.error || "").startsWith(BOT_BLOCK_NOTE)) {
+      return { status: "no_website", reason: "bot_protected", progress: 100, stage: null, message: locale === "en" ? "This website blocks automated access with bot protection, so it could not be analysed. You can send screenshots of the site instead." : "Site bot korumasıyla otomatik erişimi engelliyor, bu yüzden taranamadı. Sitenin ekran görüntülerini gönderebilirsiniz." };
     }
     if (audit.status === "no_verified_website") {
       return { status: "no_website", progress: 100, stage: null, message: locale === "en" ? "We could not verify this website. Our team will contact you." : "Web sitesi doğrulanamadı. Ekibimiz sizinle iletişime geçecek." };

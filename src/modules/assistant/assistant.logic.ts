@@ -162,6 +162,9 @@ export const TOOLS: Anthropic.Tool[] = [
 // Analiz sonucunu modele veri olarak verir. Taranan siteden gelen metinler kısaltılır ve etiket içine alınır.
 export function auditNotice(poll: any, domain: string, locale: Locale): string {
   const head = "[Otomatik bildirim: bu mesajı kullanıcı yazmadı.]";
+  if (poll?.reason === "bot_protected") {
+    return `${head} ${domain} için site analizi yapılamadı: site bot korumasıyla otomatik erişimi engelliyor (site çalışıyor, sorun adreste değil). Kullanıcıya bunu doğru şekilde söyle; "doğrulanamadı" ya da "adres hatalı olabilir" deme. Sitenin ana sayfası, hizmet sayfaları ve iletişim/teklif bölümünün ekran görüntülerini (ataç simgesiyle) göndermesini öner; görsellerle iş analizini yapabileceğini belirt.`;
+  }
   if (poll?.status !== "completed" || !poll.result) {
     const why = one(poll?.message, 300) || "Analiz tamamlanamadı.";
     return `${head} ${domain} için site analizi tamamlanamadı (${why}). Kullanıcıya kısaca bildir, ekibimizin siteyi elle inceleyebileceğini söyle ve konuşmaya devam et.`;

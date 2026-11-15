@@ -55,6 +55,10 @@ function evidenceRows(crawl: CrawlResult, ctx: AuditContext): EvidenceRow[] {
   return rows;
 }
 
+// Ana sayfa 403/429 dönüyorsa site büyük olasılıkla bot koruması (Vercel/Cloudflare challenge) ile otomatik erişimi engelliyor.
+export const BOT_BLOCK_STATUS = new Set([401, 403, 429]);
+export const BOT_BLOCK_NOTE = "Site bot korumasıyla otomatik erişimi engelliyor";
+
 function noWebsite(reason: string, evidence: EvidenceRow[] = []): AuditOutcome {
   const metrics = toScored(noWebsiteResults(reason));
   return { status: "no_verified_website", finalUrl: null, metrics, score: computeGrowthScore(metrics), opportunities: [], evidence, summary: null, usage: {}, aiModel: null, note: reason };
@@ -79,6 +83,7 @@ export async function runAudit(lead: LeadInfo, progress: (stage: string, pct: nu
   if (crawl.robots.blocksAll) return noWebsite("Site robots.txt ile otomatik taramaya kapalı; denetim yapılmadı.", evidenceRows(crawl, { lead, crawl, pagespeed: { mobile: null, desktop: null } }));
   if (!crawl.pages.length) {
     const first = crawl.failedPages[0];
+    if (first?.status && BOT_BLOCK_STATUS.has(first.status)) return noWebsite(`${BOT_BLOCK_NOTE} (HTTP ${first.status}).`, evidenceRows(crawl, { lead, crawl, pagespeed: { mobile: null, desktop: null } }));
     if (first?.status && first.status >= 500) throw new RetryableAuditError(`Site hata döndürdü (HTTP ${first.status})`);
     return noWebsite(`Ana sayfa açılamadı${first ? ` (${first.error})` : ""}.`, evidenceRows(crawl, { lead, crawl, pagespeed: { mobile: null, desktop: null } }));
   }
