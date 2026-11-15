@@ -183,6 +183,8 @@ export class AssistantService {
     let said = "";
     const say = (t: string) => { said += t; emit({ type: "text", text: t }); };
 
+    // Önceki turların düşünce blokları sistem metni/araçlar değiştiğinde geçersizleşir (400); yalnız bu turunkiler gönderilir.
+    const turnStart = conv.messages.length - 1;
     try {
       for (let step = 0; step < LIMITS.loopSteps; step++) {
         if (said && !/\n\n$/.test(said)) say("\n\n");
@@ -193,7 +195,7 @@ export class AssistantService {
           system: [{ type: "text", text: system, cache_control: { type: "ephemeral" } }],
           tools: TOOLS,
           output_config: { effort: "low" },
-          messages: await this.hydrate(conv.messages, imgCache),
+          messages: await this.hydrate(withoutOldThinking(conv.messages, turnStart), imgCache),
         });
         stream.on("text", (delta) => say(delta));
         const msg = await stream.finalMessage();
@@ -351,4 +353,12 @@ export class AssistantService {
     for (const k of Object.keys(next)) if (next[k] === undefined) delete next[k];
     await put("leads", conv.leadId, next);
   }
+}
+
+export function withoutOldThinking<T extends { role: string; content: unknown }>(messages: T[], turnStart: number): T[] {
+  return messages.map((m, i) => {
+    if (i >= turnStart || m.role !== "assistant" || !Array.isArray(m.content)) return m;
+    const content = (m.content as { type: string }[]).filter((b) => b.type !== "thinking" && b.type !== "redacted_thinking");
+    return content.length === (m.content as unknown[]).length ? m : { ...m, content: content.length ? content : [{ type: "text", text: "…" }] };
+  });
 }
