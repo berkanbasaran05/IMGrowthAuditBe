@@ -7,10 +7,12 @@ import { normalizeWebsite } from "../audit/safe-fetch.js";
 import { PublicAuditError, PublicAuditService, domainOf, slug } from "../audit/public-audit.service.js";
 import { extractUrl } from "../instagram/instagram.logic.js";
 import { hashToken } from "../sales/sales.service.js";
+import { rateLimited } from "../../infrastructure/http/rate-limit.js";
 import {
-  type Conversation, type Locale, LIMITS, OUT_OF_SCOPE, TOOL_AUDIT, TOOL_PROFILE, TOOLS,
+  type Conversation, type Locale, type ViewItem, LIMITS, OUT_OF_SCOPE, TOOL_AUDIT, TOOL_PROFILE, TOOL_REPORT, TOOLS,
   auditNotice, isConversationId, mergeProfile, newConversation, profileText, systemPrompt,
 } from "./assistant.logic.js";
+import { REPORT_LIMITS, UUID, gatherEvidence, generateReport, parseReportInput } from "./business-report.js";
 import { loadKnowledge } from "./knowledge.js";
 
 // Marka Partneri asistanı: konuşmayı yürütür (Claude Haiku 5.5, akışlı yanıt), ücretsiz site analizini araç
@@ -29,8 +31,15 @@ export type AssistantEvent =
   | { type: "text"; text: string }
   | { type: "audit"; domain: string }
   | { type: "profile"; profile: Record<string, string> }
+  | { type: "report_started"; kind: string; title: string }
+  | { type: "report"; token: string; title: string; kind: string; score: number }
+  | { type: "ping" }
   | { type: "done"; remaining: number }
   | { type: "error"; message: string; code: string };
+
+export const DEFAULT_IMAGE_TEXT: Record<Locale, string> = { tr: "Görselleri paylaştım.", en: "I've shared images." };
+const HISTORY_IMAGES = 6; // modele her turda gönderilen en son görsel sayısı
+const IMG_MARK = /^\[IMG:([0-9a-f-]{36})\]$/;
 
 export class AssistantError extends Error {
   constructor(readonly code: string, message: string, readonly status = 400) { super(message); }
@@ -72,7 +81,7 @@ export class AssistantService {
   }
 
   // Yeni kullanıcı mesajı ya da analiz bitti bildirimi. Olaylar emit ile akış halinde ön yüze gider.
-  async handle(req: { id?: string; text?: string; event?: "audit_done"; locale: Locale; ip: string }, emit: (e: AssistantEvent) => void, baseUrl: string) {
+  async handle(req: { id?: string; text?: string; images?: string[]; event?: "audit_done"; locale: Locale; ip: string }, emit: (e: AssistantEvent) => void, baseUrl: string) {
     let conv = req.id ? await this.load(req.id) : null;
     if (req.id && !conv) throw new AssistantError("not_found", "Konuşma bulunamadı.", 404);
     if (!conv) {
@@ -91,9 +100,17 @@ export class AssistantService {
         content = [{ type: "text", text: auditNotice(poll, conv.audit.domain, conv.locale) }];
       } else {
         if (conv.userTurns >= LIMITS.userTurns) throw new AssistantError("limit", "Bu konuşmanın mesaj sınırı doldu. Ekibimizle WhatsApp'tan devam edebilirsiniz.", 429);
+        const images = [...new Set(req.images || [])];
+        if (images.length) {
+          if (images.length > 4 || !images.every((i) => UUID.test(i))) throw new AssistantError("bad_images", "Görseller geçersiz.", 400);
+          const found = await this.prisma.assistantUpload.count({ where: { id: { in: images }, conversationId: conv.id } });
+          if (found !== images.length) throw new AssistantError("bad_images", "Görsellerden biri bu konuşmaya ait değil.", 400);
+        }
         conv.userTurns += 1;
-        conv.view.push({ role: "user", text: req.text! });
-        content = [{ type: "text", text: req.text! }];
+        const text = req.text || (images.length ? DEFAULT_IMAGE_TEXT[conv.locale] : "");
+        conv.view.push({ role: "user", text, ...(images.length ? { images } : {}) });
+        // Geçmişe görselin kendisi değil işaretçisi yazılır; model çağrısında gerçek görsel eklenir (hydrate).
+        content = [...images.map((id) => ({ type: "text" as const, text: `[IMG:${id}]` })), { type: "text", text }];
       }
       if (!req.id) emit({ type: "conversation", id: conv.id });
       const before = { messages: conv.messages.length, view: conv.view.length - (req.event ? 0 : 1), pending: conv.pending, turns: conv.userTurns - (req.event ? 0 : 1) };
@@ -130,12 +147,39 @@ export class AssistantService {
     }
   }
 
+  // Geçmişteki görsel işaretçilerini gerçek görsel bloklarına çevirir (en son HISTORY_IMAGES görsel); kimlik metni kalır.
+  private async hydrate(messages: Anthropic.MessageParam[], cache: Map<string, Anthropic.ImageBlockParam | null>): Promise<Anthropic.MessageParam[]> {
+    const ids: string[] = [];
+    for (const m of messages) if (m.role === "user" && Array.isArray(m.content)) for (const b of m.content as any[]) { const id = b.type === "text" && IMG_MARK.exec(b.text)?.[1]; if (id) ids.push(id); }
+    if (!ids.length) return messages;
+    const wanted = ids.slice(-HISTORY_IMAGES).filter((id) => !cache.has(id));
+    if (wanted.length) {
+      const rows = await this.prisma.assistantUpload.findMany({ where: { id: { in: wanted } }, select: { id: true, mime: true, data: true } });
+      for (const id of wanted) {
+        const r = rows.find((x) => x.id === id);
+        cache.set(id, r ? { type: "image", source: { type: "base64", media_type: r.mime as "image/png", data: Buffer.from(r.data).toString("base64") } } : null);
+      }
+    }
+    const shown = new Set(ids.slice(-HISTORY_IMAGES));
+    return messages.map((m) => {
+      if (m.role !== "user" || !Array.isArray(m.content)) return m;
+      return { ...m, content: (m.content as any[]).flatMap((b) => {
+        const id = b.type === "text" ? IMG_MARK.exec(b.text)?.[1] : null;
+        if (!id) return [b];
+        const img = shown.has(id) ? cache.get(id) : null;
+        return img ? [img, { type: "text", text: `[Görsel kimliği: ${id}]` }] : [{ type: "text", text: `[Görsel kimliği: ${id} — artık gösterilemiyor]` }];
+      }) };
+    });
+  }
+
   private async run(conv: Conversation, content: Anthropic.ContentBlockParam[], emit: (e: AssistantEvent) => void, ip: string) {
     conv.messages.push({ role: "user", content: [...conv.pending, ...content] });
     conv.pending = [];
     const system = systemPrompt(await loadKnowledge());
     const client = new Anthropic({ timeout: 90_000, maxRetries: 2 });
     const hadAudit = !!conv.audit;
+    const newReports: ViewItem[] = [];
+    const imgCache = new Map<string, Anthropic.ImageBlockParam | null>();
     let said = "";
     const say = (t: string) => { said += t; emit({ type: "text", text: t }); };
 
@@ -149,7 +193,7 @@ export class AssistantService {
           system: [{ type: "text", text: system, cache_control: { type: "ephemeral" } }],
           tools: TOOLS,
           output_config: { effort: "low" },
-          messages: conv.messages,
+          messages: await this.hydrate(conv.messages, imgCache),
         });
         stream.on("text", (delta) => say(delta));
         const msg = await stream.finalMessage();
@@ -163,12 +207,14 @@ export class AssistantService {
         const results: Anthropic.ToolResultBlockParam[] = [];
         let failed = false;
         for (const use of uses) {
-          const r = await this.runTool(conv, use, emit, ip);
+          const r = await this.runTool(conv, use, emit, ip, newReports);
           results.push({ type: "tool_result", tool_use_id: use.id, content: r.text, ...(r.ok ? {} : { is_error: true }) });
           if (!r.ok) failed = true;
         }
         const wroteText = said.slice(before.length).trim().length > 0;
-        if (wroteText && !failed && msg.stop_reason === "tool_use") { conv.pending = results; break; }
+        // İş analizi aracı döngüyü her zaman sürdürür: model raporu gördükten sonra konuşmalı.
+        const mustContinue = uses.some((u) => u.name === TOOL_REPORT);
+        if (wroteText && !failed && !mustContinue && msg.stop_reason === "tool_use") { conv.pending = results; break; }
         conv.messages.push({ role: "user", content: results });
       }
     } finally {
@@ -176,6 +222,7 @@ export class AssistantService {
       if (text) conv.view.push({ role: "assistant", text });
       // Analiz kartı, analizi başlatan yanıtın altında görünür (ön yüzdeki canlı sırayla aynı).
       if (!hadAudit && conv.audit) conv.view.push({ role: "audit", domain: conv.audit.domain });
+      conv.view.push(...newReports);
     }
     if (!said.trim()) {
       const fallback = conv.locale === "en" ? "Sorry, I couldn't answer that just now. Please try again." : "Şu an yanıt veremedim. Lütfen tekrar deneyin.";
@@ -184,13 +231,14 @@ export class AssistantService {
     }
   }
 
-  private async runTool(conv: Conversation, use: Anthropic.ToolUseBlock, emit: (e: AssistantEvent) => void, ip: string): Promise<{ ok: boolean; text: string }> {
+  private async runTool(conv: Conversation, use: Anthropic.ToolUseBlock, emit: (e: AssistantEvent) => void, ip: string, newReports: ViewItem[] = []): Promise<{ ok: boolean; text: string }> {
     const input = (use.input && typeof use.input === "object" ? use.input : {}) as Record<string, unknown>;
     if (use.name === TOOL_PROFILE) {
       conv.profile = mergeProfile(conv.profile, input);
       emit({ type: "profile", profile: conv.profile as Record<string, string> });
       return { ok: true, text: "Kaydedildi." };
     }
+    if (use.name === TOOL_REPORT) return this.runReport(conv, input, emit, ip, newReports);
     if (use.name !== TOOL_AUDIT) return { ok: false, text: `Bilinmeyen araç: ${use.name}` };
 
     if (conv.audit) return { ok: false, text: `Bu konuşmada ${conv.audit.domain} için zaten bir analiz yapıldı; yeni analiz başlatılamaz. Kullanıcıya bunu kısaca söyle.` };
@@ -215,6 +263,56 @@ export class AssistantService {
       if (e instanceof PublicAuditError) return { ok: false, text: `Analiz başlatılamadı: ${e.message} Kullanıcıya kısaca bildir.` };
       this.log.error(`Analiz başlatılamadı: ${e?.message}`);
       return { ok: false, text: "Analiz şu an başlatılamadı (geçici hata). Kullanıcıya daha sonra tekrar denemesini ya da ekibe yazmasını söyle." };
+    }
+  }
+
+  // İş analizi raporu: kanıt topla, görselleri yükle, tek model çağrısı, kaydet. Hata durumunda is_error sonucu döner.
+  private async runReport(conv: Conversation, raw: Record<string, unknown>, emit: (e: AssistantEvent) => void, ip: string, newReports: ViewItem[]): Promise<{ ok: boolean; text: string }> {
+    const parsed = parseReportInput(raw);
+    if (!parsed.ok) return { ok: false, text: parsed.error };
+    const input = parsed.input!;
+    if ((conv.reports?.length || 0) >= REPORT_LIMITS.perConversation) return { ok: false, text: "Bu konuşmada en fazla 3 rapor hazırlanabilir ve sınıra ulaşıldı. Kullanıcıya bunu söyle; ekibimizle WhatsApp'tan devam edebileceğini ekle." };
+    if (rateLimited(`assistant:report:${ip}`, REPORT_LIMITS.perIpPerDay, 86_400_000)) return { ok: false, text: "Bu bağlantıdan bugün çok fazla rapor istendi; yarın tekrar denenebilir. Kullanıcıya bunu söyle ve konuşmaya devam et." };
+
+    emit({ type: "report_started", kind: input.tur, title: input.baslik });
+    const ping = setInterval(() => emit({ type: "ping" }), 10_000);
+    try {
+      const rows = input.gorseller.length
+        ? await this.prisma.assistantUpload.findMany({ where: { id: { in: input.gorseller }, conversationId: conv.id }, select: { id: true, mime: true, data: true } })
+        : [];
+      const images = rows.map((r) => ({ mime: r.mime, data: Buffer.from(r.data) }));
+      const signal = AbortSignal.timeout(130_000);
+      const evidence = await gatherEvidence(input.baglantilar, signal);
+      if (input.gorseller.length && !images.length) evidence.notes.push("Belirtilen görseller bulunamadı.");
+      const res = await generateReport({ input, evidence, images, knowledge: await loadKnowledge(), locale: conv.locale });
+      if (res.usage) {
+        conv.usage.inputTokens += res.usage.inputTokens; conv.usage.outputTokens += res.usage.outputTokens;
+        conv.usage.costUsd = Math.round((conv.usage.costUsd + res.usage.costUsd) * 1e6) / 1e6;
+      }
+      if (!res.ok || !res.data) {
+        this.log.warn(`İş analizi üretilemedi: ${res.code} ${res.reason}`);
+        return { ok: false, text: "Rapor şu an hazırlanamadı (geçici hata). Kullanıcıdan kısaca özür dile ve daha sonra tekrar denemesini ya da ekibe yazmasını söyle." };
+      }
+      const report = res.data;
+      const token = crypto.randomBytes(32).toString("base64url");
+      const createdAt = new Date();
+      await this.prisma.businessReport.create({
+        data: {
+          tokenHash: hashToken(token), conversationId: conv.id, leadId: conv.leadId, kind: input.tur, title: report.title.slice(0, 200),
+          overallScore: report.overallScore, locale: conv.locale, createdAt,
+          data: { ...report, meta: { model: res.usage?.model, costUsd: res.usage?.costUsd, inputTokens: res.usage?.inputTokens, outputTokens: res.usage?.outputTokens, links: input.baglantilar.length, images: images.length } } as unknown as object,
+        },
+      });
+      (conv.reports ||= []).push({ token, title: report.title, kind: input.tur, score: report.overallScore, createdAt: createdAt.toISOString(), costUsd: res.usage?.costUsd });
+      newReports.push({ role: "report", token, title: report.title, kind: input.tur, score: report.overallScore });
+      emit({ type: "report", token, title: report.title, kind: input.tur, score: report.overallScore });
+      const data = { baslik: report.title, puan: report.overallScore, derece: report.scoreLabel, ilk_adimlar: report.steps.slice(0, 3).map((s) => s.title), okunamayanlar: report.evidenceNotes.filter((n) => /okunamad|açılamad|bulunamad|erişilemed/i.test(n)).slice(0, 3) };
+      return { ok: true, text: `${JSON.stringify(data)}\nRaporun tamamı kullanıcının ekranında kart olarak görünüyor; özetle, en önemli 2-3 noktayı ve İstanbul Marketing'in çözümünü anlat, bağlantı yazma.${conv.locale === "en" ? " Reply in English." : ""}` };
+    } catch (e: any) {
+      this.log.error(`İş analizi hatası: ${e?.message}`);
+      return { ok: false, text: "Rapor şu an hazırlanamadı (geçici hata). Kullanıcıdan kısaca özür dile ve daha sonra tekrar denemesini ya da ekibe yazmasını söyle." };
+    } finally {
+      clearInterval(ping);
     }
   }
 
@@ -248,7 +346,7 @@ export class AssistantService {
       // Not, ekip elle değiştirmediyse (asistanın yazdığı notsa) her konuşmada güncel profille yenilenir.
       inboundMessage: !lead.inboundMessage || /^Marka asistanı/.test(lead.inboundMessage)
         ? `Marka asistanı${profileText(p) ? ` · ${profileText(p)}` : ""}`.slice(0, 1000) : lead.inboundMessage,
-      assistant: { conversationId: conv.id, profile: p, userTurns: conv.userTurns, updatedAt: conv.updatedAt, costUsd: conv.usage.costUsd },
+      assistant: { conversationId: conv.id, profile: p, userTurns: conv.userTurns, reports: conv.reports?.length || 0, updatedAt: conv.updatedAt, costUsd: conv.usage.costUsd },
     };
     for (const k of Object.keys(next)) if (next[k] === undefined) delete next[k];
     await put("leads", conv.leadId, next);

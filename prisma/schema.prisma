@@ -645,3 +645,34 @@ model AssistantConversation {
   @@index([leadId], map: "assistant_conversations_lead_idx")
   @@map("assistant_conversations")
 }
+
+// Marka Partneri: sohbete yüklenen görseller (konuşma başına ≤8, ≤5 MB; PNG/JPEG/WebP). Konuşma silinince silinir.
+model AssistantUpload {
+  id             String   @id @default(uuid()) @db.Uuid
+  conversationId String   @map("conversation_id") @db.VarChar(32)
+  mime           String   @db.VarChar(40)
+  bytes          Int
+  data           Bytes
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([conversationId], map: "assistant_uploads_conversation_idx")
+  @@map("assistant_uploads")
+}
+
+// Marka Partneri iş analizi raporları (işletme, fikir, uygulama, sosyal hesap...). Belirteç yalnızca özet (sha256)
+// olarak saklanır; süresiz saklanır.
+model BusinessReport {
+  id             String   @id @default(uuid()) @db.Uuid
+  tokenHash      String   @unique @map("token_hash") @db.Char(64)
+  conversationId String   @map("conversation_id") @db.VarChar(32)
+  leadId         String?  @map("lead_id") @db.VarChar(120)
+  kind           String   @db.VarChar(32)
+  title          String   @db.VarChar(200)
+  overallScore   Int      @map("overall_score")
+  locale         String   @default("tr") @db.VarChar(5)
+  data           Json
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@index([conversationId], map: "business_reports_conversation_idx")
+  @@map("business_reports")
+}

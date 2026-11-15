@@ -7,7 +7,8 @@ import { PublicAuditService } from "../audit/public-audit.service.js";
 import { applyCors } from "../audit/public-audit.controller.js";
 import { publicBase } from "../sales/sales.controller.js";
 import { LIMITS, type Locale, cleanUserText, isConversationId, publicView } from "./assistant.logic.js";
-import { AssistantError, type AssistantEvent, AssistantService } from "./assistant.service.js";
+import { UPLOAD_LIMITS, UUID } from "./business-report.js";
+import { AssistantError, type AssistantEvent, AssistantService, DEFAULT_IMAGE_TEXT } from "./assistant.service.js";
 
 // Marka Partneri asistanı — herkese açık uçlar (oturum gerekmez; konuşma kimliği tahmin edilemez bir belirteçtir).
 //   POST /api/public/assistant            { id?, text?, event?: "audit_done", locale } → text/event-stream
@@ -22,6 +23,7 @@ const MESSAGES: Record<string, Record<Locale, string>> = {
   empty: { tr: "Mesaj boş olamaz.", en: "The message cannot be empty." },
   too_long: { tr: `Mesaj en fazla ${LIMITS.messageChars} karakter olabilir.`, en: `Messages can be at most ${LIMITS.messageChars} characters.` },
   rate_limited: { tr: "Çok fazla mesaj gönderildi. Lütfen biraz sonra tekrar deneyin.", en: "Too many messages. Please try again later." },
+  bad_images: { tr: "Görseller geçersiz ya da bu konuşmaya ait değil.", en: "The images are invalid or do not belong to this conversation." },
   unavailable: { tr: "Asistan şu an kullanılamıyor. Lütfen biraz sonra tekrar deneyin.", en: "The assistant is unavailable right now. Please try again shortly." },
 };
 
@@ -50,10 +52,20 @@ export class AssistantController {
 
     const event = b.event === "audit_done" ? "audit_done" as const : undefined;
     let text: string | undefined;
+    let images: string[] | undefined;
+    if (!event && b.images !== undefined && b.images !== null) {
+      if (!Array.isArray(b.images) || b.images.length > UPLOAD_LIMITS.perMessage || !b.images.every((i: unknown) => typeof i === "string" && UUID.test(i))) return fail(400, "bad_images");
+      images = [...new Set<string>(b.images)];
+      if (images.length && !b.id) return fail(400, "bad_images");
+    }
     if (!event) {
-      const parsed = cleanUserText(b.text);
-      if (!parsed.ok) return fail(400, parsed.code!);
-      text = parsed.text;
+      const blank = typeof b.text !== "string" || !b.text.trim();
+      if (images?.length && blank) text = DEFAULT_IMAGE_TEXT[locale];
+      else {
+        const parsed = cleanUserText(b.text);
+        if (!parsed.ok) return fail(400, parsed.code!);
+        text = parsed.text;
+      }
     } else if (!b.id) return fail(400, "empty");
     const ip = clientIp(req);
     if (!event && rateLimited(`assistant:msg:${ip}`, LIMITS.ipPerHour, 3_600_000)) return fail(429, "rate_limited");
@@ -66,10 +78,11 @@ export class AssistantController {
         res.flushHeaders();
         open = true;
       }
-      res.write(`data: ${JSON.stringify(e)}\n\n`);
+      // Bekleme sırasında vekil sunucuların akışı kesmemesi için yorum satırı (istemci yok sayar).
+      res.write(e.type === "ping" ? ": ping\n\n" : `data: ${JSON.stringify(e)}\n\n`);
     };
     try {
-      await this.assistant.handle({ id: b.id, text, event, locale, ip }, emit, publicBase(req));
+      await this.assistant.handle({ id: b.id, text, images, event, locale, ip }, emit, publicBase(req));
     } catch (error: any) {
       const known = error instanceof AssistantError;
       if (!known) log("error", "assistant_message", { error: error?.message });

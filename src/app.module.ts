@@ -28,12 +28,13 @@ import { IgPanelController } from "./modules/instagram/ig-panel.controller.js";
 import { IgPanelService } from "./modules/instagram/ig-panel.service.js";
 import { PaymentsService } from "./modules/payments/payments.service.js";
 import { AssistantController } from "./modules/assistant/assistant.controller.js";
+import { AssistantUploadController, PublicBusinessReportController } from "./modules/assistant/assistant-business.controller.js";
 import { AssistantPanelController } from "./modules/assistant/assistant-panel.controller.js";
 import { AssistantService } from "./modules/assistant/assistant.service.js";
 
 @Module({
   // AuditController, "api/:endpoint" yakalayıcısını içeren GrowthController'dan önce kaydedilir.
-  controllers: [HealthController, CrmController, AuditController, PublicAuditController, AssistantController, AssistantPanelController, SalesController, PublicReportController, PublicReportApiController, GrowthManagerAdminController, PortalBillingController, PortalController, OAuthController, GeoController, OpsController, PaymentsAdminController, PaymentLinkController, InstagramController, IgMediaController, IgQueueController, IgPanelController, GrowthController],
+  controllers: [HealthController, CrmController, AuditController, PublicAuditController, AssistantController, AssistantUploadController, PublicBusinessReportController, AssistantPanelController, SalesController, PublicReportController, PublicReportApiController, GrowthManagerAdminController, PortalBillingController, PortalController, OAuthController, GeoController, OpsController, PaymentsAdminController, PaymentLinkController, InstagramController, IgMediaController, IgQueueController, IgPanelController, GrowthController],
   providers: [PrismaService, DatabaseService, CrmService, AuditService, PublicAuditService, AssistantService, AuditQueue, SalesService, GrowthManagerService, GrowthManagerScheduler, GeoService, RetentionService, OpsService, PaymentsService, InstagramService, IgPublisherService, IgPanelService],
 })
 export class AppModule {}

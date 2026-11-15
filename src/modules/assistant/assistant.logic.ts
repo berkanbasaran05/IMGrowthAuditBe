@@ -19,9 +19,12 @@ export const newConversationId = () => crypto.randomBytes(24).toString("base64ur
 export const isConversationId = (v: unknown): v is string => typeof v === "string" && ID.test(v);
 
 export type ViewItem =
-  | { role: "user"; text: string }
+  | { role: "user"; text: string; images?: string[] }
   | { role: "assistant"; text: string }
-  | { role: "audit"; domain: string };
+  | { role: "audit"; domain: string }
+  | { role: "report"; token: string; title: string; kind: string; score: number };
+
+export interface ReportRef { token: string; title: string; kind: string; score: number; createdAt: string; costUsd?: number }
 
 export interface AuditRef { token: string; domain: string; leadId: string; notified: boolean }
 
@@ -38,6 +41,7 @@ export interface Conversation {
   audit: AuditRef | null;
   userTurns: number;
   leadId: string | null;
+  reports?: ReportRef[]; // bu konuşmada hazırlanan iş analizi raporları (eski konuşmalarda yok)
   usage: { inputTokens: number; outputTokens: number; cacheReadTokens: number; costUsd: number };
 }
 
@@ -104,6 +108,7 @@ export function profileText(p: Profile): string {
 
 export const TOOL_AUDIT = "site_analizi_baslat";
 export const TOOL_PROFILE = "marka_profili_kaydet";
+export const TOOL_REPORT = "is_analizi_hazirla";
 
 export const TOOLS: Anthropic.Tool[] = [
   {
@@ -127,6 +132,26 @@ export const TOOLS: Anthropic.Tool[] = [
     input_schema: {
       type: "object",
       properties: Object.fromEntries(Object.entries(PROFILE_FIELDS).map(([k, d]) => [k, { type: "string", description: d }])),
+      additionalProperties: false,
+    },
+  },
+  {
+    name: TOOL_REPORT,
+    description:
+      "Kullanıcının işletmesi, iş fikri, projesi, mobil uygulaması, ürünü ya da sosyal medya hesabı için ayrıntılı ve profesyonel bir iş analizi raporu hazırlar " +
+      "(puanlı boyutlar, güçlü yönler, riskler, hedef kitle, öncelikli 5 adım, 30/60/90 günlük plan). Kullanıcı bunun analizini istediğinde ve ne olduğu, kimin için olduğu, hangi aşamada olduğu yeterince belliyse çağır. " +
+      "Kilit bilgiler eksikse önce 1-2 kısa soru sor, sonra çağır. Kullanıcı bağlantı (App Store, Google Play, site) paylaştıysa baglantilar alanına, yüklediği görseller varsa gorseller alanına (görsel kimlikleri) ekle. " +
+      "Yalnızca web sitesi adresi verilip site analizi isteniyorsa bu aracı değil site_analizi_baslat aracını kullan. Rapor 20-60 sn sürer. Bir konuşmada en fazla 3 rapor hazırlanır.",
+    input_schema: {
+      type: "object",
+      properties: {
+        tur: { type: "string", enum: ["mevcut_isletme", "is_fikri", "proje", "mobil_uygulama", "web_sitesi", "sosyal_medya", "urun", "diger"], description: "Analizin türü" },
+        baslik: { type: "string", description: "Kısa başlık, ör. \"Kadıköy vegan fırın fikri\"" },
+        ozet: { type: "string", description: "Kullanıcının anlattığı her şey, ayrıntılı: ne olduğu, kime hitap ettiği, aşaması, satış kanalı, fiyat, hedef, endişeler" },
+        baglantilar: { type: "array", items: { type: "string" }, description: "Kullanıcının paylaştığı bağlantılar (en fazla 3)" },
+        gorseller: { type: "array", items: { type: "string" }, description: "Analizle ilgili, kullanıcının yüklediği görsellerin kimlikleri (mesajda \"Görsel kimliği\" olarak yazar)" },
+      },
+      required: ["tur", "baslik", "ozet"],
       additionalProperties: false,
     },
   },
@@ -176,6 +201,13 @@ Görevin: Kullanıcının mevcut işletmesini ya da kurmak istediği işi tanım
 - Araç hata dönerse durumu tek cümleyle söyle; az önce sorduğun soruyu tekrarlama.
 - Analiz bitince "[Otomatik bildirim" ile başlayan bir mesaj gelir; onu kullanıcı yazmadı. İçindeki <analiz> verisini kullanıcının işletmesi bağlamında yorumla: genel puanı ve en önemli 2-3 sorunu sade bir dille anlat, her biri için İstanbul Marketing'in çözümünü söyle. Raporun tamamı ekranda kart olarak görünüyor; bağlantı yazma.
 
+# İş analizi
+- Kullanıcı işletmesini, iş fikrini, projesini, mobil uygulamasını, ürününü ya da sosyal medya hesabını analiz ettirmek isterse ${TOOL_REPORT} aracını kullan. Kullanıcı anlatabilir, görsel (ekran görüntüsü, fotoğraf) yükleyebilir ya da bağlantı (App Store, Google Play, site) yapıştırabilir; görseller mesajda "[Görsel kimliği: ...]" olarak görünür, ilgili olanların kimliğini gorseller alanına yaz.
+- Yalnızca web sitesi adresi verilip site analizi isteniyorsa ${TOOL_AUDIT} aracını kullan; uygulama, sosyal hesap, fikir, proje ya da ürün için ${TOOL_REPORT}. Aynı şey için iki aracı birden çalıştırma.
+- Kullanıcı rakip ya da örnek aldığı bir uygulamanın/işletmenin analizini de isteyebilir; bu kapsam içidir (kendi işine ışık tutar). Bağlantı verdiyse ve amacı belliyse hemen çağır.
+- Aracı çağırmadan önce en fazla 2 kısa soru sor (ne olduğu, kime hitap ettiği, hangi aşamada); yeterince bilgi varsa hiç sormadan çağır. Bağlantı paylaşılmış ama okunamayacak türdeyse (Instagram, TikTok) ekran görüntüsü iste.
+- Aracı çağırdığın turda "Analizi hazırlıyorum" diye kısaca söyle; sonuç aynı turda gelir. Rapor hazır olunca tamamı kullanıcının ekranında kart olarak görünür: sen en önemli 2-3 noktayı ve İstanbul Marketing'in buna çözümünü kısaca anlat, bağlantı yazma. Rapor hazırlanamazsa tek cümleyle özür dile.
+
 # Konu sınırı
 Yalnızca kullanıcının işini ilerleten konulara yardım edersin. Her mesajda kendine şunu sor: "Bu mesaj, kullanıcının tanıttığı işletmeyi ya da kurmak istediği işi geliştirmeye yarıyor mu?"
 - Evet ise yardım et. Bu, işletmenin kendi uzmanlık alanını da kapsar: restorana menü ve yemek, gözlükçüye çerçeve ve lens, diş kliniğine tedavilerin tanıtımı, sigortacıya poliçelerin anlatımı, kafe kuracak birine kahve ve konsept konusunda yardım edebilirsin. Pazarlama, marka, satış, müşteri, web sitesi, reklam, sosyal medya, yazılım, fiyatlandırma, iş kurma ve büyüme her zaman kapsamdadır.
@@ -216,6 +248,7 @@ export function publicView(c: Conversation) {
     messages: c.view,
     profile: c.profile,
     audit: c.audit ? { domain: c.audit.domain, notified: c.audit.notified } : null,
+    reports: (c.reports || []).map((r) => ({ token: r.token, title: r.title, kind: r.kind, score: r.score, createdAt: r.createdAt })),
     remaining: Math.max(0, LIMITS.userTurns - c.userTurns),
   };
 }

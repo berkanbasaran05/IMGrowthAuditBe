@@ -67,13 +67,16 @@ export class AssistantPanelController {
     }
     res.set("Cache-Control", "no-store");
     const { data: _data, ipHash: _ip, ...cols } = row;
-    return res.json({ ...cols, messages: c.view, profile: c.profile, audit, usage: c.usage });
+    const site = (process.env.PUBLIC_SITE_URL || "https://www.istanbul.marketing").replace(/\/+$/, "");
+    const reports = (c.reports || []).map((r) => ({ title: r.title, kind: r.kind, score: r.score, createdAt: r.createdAt, url: `${site}/analiz/is/${r.token}` }));
+    return res.json({ ...cols, messages: c.view, profile: c.profile, audit, reports, usage: c.usage });
   }
 
   @Delete("conversations/:id")
   async remove(@Param("id") id: string, @Res() res: Response) {
     if (!isConversationId(id)) return res.status(404).json({ error: "Bulunamadı" });
     const out = await this.prisma.assistantConversation.deleteMany({ where: { id } });
+    if (out.count) await this.prisma.assistantUpload.deleteMany({ where: { conversationId: id } }); // yüklenen görseller konuşmayla silinir; raporlar kalır
     if (!out.count) return res.status(404).json({ error: "Bulunamadı" });
     log("info", "assistant_conversation_deleted", { id: id.slice(0, 6) });
     return res.json({ ok: true });

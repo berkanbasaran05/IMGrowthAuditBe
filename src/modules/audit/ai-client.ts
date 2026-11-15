@@ -21,23 +21,28 @@ export interface AiResult<T> { ok: boolean; data?: T; reason?: string; code?: st
 export class RetryableAiError extends Error { readonly retryable = true; }
 
 export async function structuredCall<T>(req: {
-  system: string; user: string; schema: Record<string, unknown>; validator: z.ZodType<T>;
+  system: string;
+  user: string | any[]; // metin ya da içerik blokları (görsel dahil)
+  schema: Record<string, unknown>; validator: z.ZodType<T>;
   effort?: "low" | "medium" | "high"; maxTokens?: number; signal?: AbortSignal;
+  model?: string; price?: { input: number; output: number }; // varsayılan: AI_MODEL ve AUDIT_AI_PRICE_*
+  timeoutMs?: number; maxRetries?: number;
 }): Promise<AiResult<T>> {
-  const client = new Anthropic({ timeout: 180_000, maxRetries: 2 });
+  const client = new Anthropic({ timeout: req.timeoutMs ?? 180_000, maxRetries: req.maxRetries ?? 2 });
+  const model = req.model || AI_MODEL, price = req.price || PRICE;
   try {
-    const fallback = supportsServerFallback(AI_MODEL) ? { betas: ["server-side-fallback-2026-07-01"], fallbacks: "default" as const } : {};
+    const fallback = supportsServerFallback(model) ? { betas: ["server-side-fallback-2026-07-01"], fallbacks: "default" as const } : {};
     const response = await client.beta.messages.create({
-      model: AI_MODEL,
+      model,
       max_tokens: req.maxTokens ?? 16_000,
       ...fallback,
       system: req.system,
       output_config: { effort: req.effort ?? "medium", format: { type: "json_schema", schema: req.schema } },
-      messages: [{ role: "user", content: req.user }],
+      messages: [{ role: "user", content: req.user as any }],
     }, { signal: req.signal });
     const usage: AiUsage = {
       inputTokens: response.usage.input_tokens, outputTokens: response.usage.output_tokens, model: response.model,
-      costUsd: Math.round(((response.usage.input_tokens * PRICE.input + response.usage.output_tokens * PRICE.output) / 1_000_000) * 10_000) / 10_000,
+      costUsd: Math.round(((response.usage.input_tokens * price.input + response.usage.output_tokens * price.output) / 1_000_000) * 10_000) / 10_000,
     };
     if (response.stop_reason === "refusal") return { ok: false, code: "refusal", reason: "AI isteği reddetti", usage };
     if (response.stop_reason === "max_tokens") return { ok: false, code: "max_tokens", reason: "AI yanıtı yarıda kesildi", usage };
